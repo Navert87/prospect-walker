@@ -19,6 +19,8 @@ const WS = {
 const uid = () => Date.now().toString(36) + Math.random().toString(36).substr(2, 6)
 const CL = { bg: "#0B1121", card: "#131B2E", border: "#1E2D4A", bL: "#2A3F65", text: "#D4DCE8", mut: "#6B7FA3", dim: "#3E5278", wh: "#F0F4F8", acc: "#4F8EF7", accBg: "#162044", warn: "#F5C542", warnBg: "#3D2E0A" }
 const FT = "'Geist Mono','SF Mono','JetBrains Mono',ui-monospace,monospace"
+const APP_PW = import.meta.env.VITE_APP_PASSWORD || ""
+const LS_KEY = "pw_authed"
 
 function grabJSON(t) {
   try { return JSON.parse(t) } catch {}
@@ -65,6 +67,12 @@ function makeWalkUrl(list) {
 }
 
 export default function App() {
+  var [authed, setAuthed] = useState(function() {
+    if (!APP_PW) return true
+    return localStorage.getItem(LS_KEY) === APP_PW
+  })
+  var [pw, setPw] = useState("")
+  var [pwErr, setPwErr] = useState(false)
   var [data, setData] = useState({ cities: {} })
   var [loading, setLoading] = useState(true)
   var [view, setView] = useState("home")
@@ -82,6 +90,7 @@ export default function App() {
   var [pCity, setPCity] = useState("")
   var [err, setErr] = useState("")
   var [openCity, setOpenCity] = useState(null)
+  var [walkSel, setWalkSel] = useState(new Set())
 
   useEffect(function() {
     loadData().then(function(d) {
@@ -191,6 +200,45 @@ export default function App() {
     setNId(null); setView("home")
   }
 
+  var doLogin = function() {
+    if (pw === APP_PW) {
+      localStorage.setItem(LS_KEY, pw)
+      setAuthed(true)
+      setPw("")
+      setPwErr(false)
+    } else {
+      setPwErr(true)
+    }
+  }
+
+  var doLogout = function() {
+    localStorage.removeItem(LS_KEY)
+    setAuthed(false)
+    setPw("")
+  }
+
+  if (!authed) return (
+    <div style={{ background: CL.bg, minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: FT, padding: 40 }}>
+      <div style={{ width: "100%", maxWidth: 300 }}>
+        <div style={{ textAlign: "center", marginBottom: 30 }}>
+          <p style={{ fontSize: 28, margin: "0 0 8px", opacity: 0.6 }}>🔒</p>
+          <h1 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: CL.wh, letterSpacing: "0.08em" }}>PROSPECT WALKER</h1>
+          <p style={{ margin: "4px 0 0", fontSize: 10, color: CL.mut }}>Enter password to continue</p>
+        </div>
+        <input
+          type="password" value={pw}
+          onChange={function(e) { setPw(e.target.value); setPwErr(false) }}
+          onKeyDown={function(e) { if (e.key === "Enter") doLogin() }}
+          placeholder="Password"
+          autoFocus
+          style={{ display: "block", width: "100%", background: CL.card, border: "1px solid " + (pwErr ? "#E8606A" : CL.border), borderRadius: 8, color: CL.wh, fontSize: 13, padding: "11px 14px", fontFamily: FT, outline: "none", boxSizing: "border-box", marginBottom: 10 }}
+        />
+        {pwErr && <p style={{ margin: "0 0 8px", fontSize: 10, color: "#E8606A" }}>Wrong password</p>}
+        <button onClick={doLogin} style={{ display: "block", width: "100%", background: CL.acc, border: "none", borderRadius: 8, color: "#fff", fontSize: 12, padding: "11px 0", cursor: "pointer", fontFamily: FT, fontWeight: 600 }}>Unlock</button>
+      </div>
+    </div>
+  )
+
   if (loading) return <div style={{ background: CL.bg, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FT }}><p style={{ color: CL.mut, fontSize: 12 }}>Loading...</p></div>
 
   if (busy) return (
@@ -220,7 +268,10 @@ export default function App() {
               {sub && <p style={{ margin: "1px 0 0", fontSize: 9, color: CL.mut }}>{sub}</p>}
             </div>
           </div>
-          {ok && <span style={{ fontSize: 10, color: ok === "✓" ? "#5DE4A5" : "#E8606A", fontWeight: 600 }}>{ok}</span>}
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {ok && <span style={{ fontSize: 10, color: ok === "✓" ? "#5DE4A5" : "#E8606A", fontWeight: 600 }}>{ok}</span>}
+            <button onClick={doLogout} style={{ background: "none", border: "none", color: CL.dim, fontSize: 12, cursor: "pointer", padding: 0, fontFamily: FT, lineHeight: 1 }} title="Lock">🔒</button>
+          </div>
         </div>
       </div>
     )
@@ -315,16 +366,32 @@ export default function App() {
       var d = (w[a.webScore] || 1) - (w[b.webScore] || 1)
       return d !== 0 ? d : (STATUS[a.status] || {}).sort - (STATUS[b.status] || {}).sort
     })
-    var walkable = shown.filter(function(p) { return p.status === "not_visited" || p.status === "go_back" })
+    var walkable = shown.filter(function(p) { return walkSel.has(p.id) })
     var mUrl = makeWalkUrl(walkable)
+
+    var toggleWalk = function(pid) {
+      var s = new Set(walkSel)
+      if (s.has(pid)) s.delete(pid); else s.add(pid)
+      setWalkSel(s)
+    }
+    var selAllShown = function() {
+      var s = new Set(walkSel)
+      shown.forEach(function(p) { if (p.address) s.add(p.id) })
+      setWalkSel(s)
+    }
+    var clearSel = function() { setWalkSel(new Set()) }
 
     return (
       <div style={{ background: CL.bg, minHeight: "100vh", fontFamily: FT, color: CL.text, maxWidth: 500, margin: "0 auto" }}>
-        {hdr(nh.name, city ? city.name : "", function() { setNId(null); setView("home"); setErr("") })}
+        {hdr(nh.name, city ? city.name : "", function() { setNId(null); setView("home"); setErr(""); setWalkSel(new Set()) })}
         <div style={{ padding: "12px 16px 100px" }}>
           <div style={{ display: "flex", gap: 5, marginBottom: 8, flexWrap: "wrap" }}>
-            <button onClick={doScout} style={{ flex: 1, background: CL.warnBg, border: "1px solid " + CL.warn + "33", borderRadius: 7, color: CL.warn, fontSize: 10, padding: "8px 10px", cursor: "pointer", fontFamily: FT, fontWeight: 600 }}>🔍 Scout Weak Presence</button>
-            {walkable.length >= 2 && mUrl && <a href={mUrl} target="_blank" rel="noopener noreferrer" style={{ flex: 1, background: CL.accBg, border: "1px solid " + CL.acc + "33", borderRadius: 7, color: CL.acc, fontSize: 10, padding: "8px 10px", fontFamily: FT, fontWeight: 600, textDecoration: "none", textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center" }}>🗺 Walk ({walkable.length})</a>}
+            <button onClick={doScout} style={{ flex: 1, background: CL.warnBg, border: "1px solid " + CL.warn + "33", borderRadius: 7, color: CL.warn, fontSize: 10, padding: "8px 10px", cursor: "pointer", fontFamily: FT, fontWeight: 600 }}>🔍 Scout</button>
+            {walkable.length >= 1 && mUrl && <a href={mUrl} target="_blank" rel="noopener noreferrer" style={{ flex: 1, background: CL.accBg, border: "1px solid " + CL.acc + "33", borderRadius: 7, color: CL.acc, fontSize: 10, padding: "8px 10px", fontFamily: FT, fontWeight: 600, textDecoration: "none", textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center" }}>🗺 Walk ({walkable.length})</a>}
+          </div>
+          <div style={{ display: "flex", gap: 5, marginBottom: 8 }}>
+            <button onClick={selAllShown} style={{ background: "none", border: "1px solid " + CL.border, borderRadius: 5, color: CL.mut, fontSize: 9, padding: "4px 8px", cursor: "pointer", fontFamily: FT }}>☑ Select All</button>
+            {walkSel.size > 0 && <button onClick={clearSel} style={{ background: "none", border: "1px solid " + CL.border, borderRadius: 5, color: CL.mut, fontSize: 9, padding: "4px 8px", cursor: "pointer", fontFamily: FT }}>Clear ({walkSel.size})</button>}
           </div>
           <div style={{ display: "flex", gap: 5, marginBottom: 10 }}>
             <button onClick={function() { setForm({ name: "", address: "", type: "", webScore: "weak", contact: "", notes: "", status: "not_visited" }); setEId(null); setView("form") }} style={{ background: CL.card, border: "1px solid " + CL.border, borderRadius: 7, color: CL.text, fontSize: 10, padding: "7px 10px", cursor: "pointer", fontFamily: FT }}>+ Manual</button>
@@ -339,23 +406,28 @@ export default function App() {
             })}
           </div>
           {shown.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "40px 20px", color: CL.dim }}><p style={{ fontSize: 11 }}>{all.length === 0 ? "Hit Scout Weak Presence to find prospects" : "No matches"}</p></div>
+            <div style={{ textAlign: "center", padding: "40px 20px", color: CL.dim }}><p style={{ fontSize: 11 }}>{all.length === 0 ? "Hit Scout to find prospects" : "No matches"}</p></div>
           ) : shown.map(function(p) {
             var sc = STATUS[p.status]
             var ws = WS[p.webScore] || WS.weak
             var op = exp === p.id
             return (
               <div key={p.id} style={{ background: CL.card, borderLeft: "3px solid " + sc.color, border: "1px solid " + (op ? sc.color + "33" : CL.border), borderLeftWidth: 3, borderLeftColor: sc.color, borderRadius: 7, marginBottom: 5, overflow: "hidden" }}>
-                <button onClick={function() { setExp(op ? null : p.id) }} style={{ display: "flex", width: "100%", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", background: "none", border: "none", cursor: "pointer", fontFamily: FT, textAlign: "left", gap: 6 }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
-                      <span style={{ fontSize: 11, color: CL.wh, fontWeight: 600 }}>{p.name}</span>
-                      <span style={{ fontSize: 7, color: ws.color, background: ws.bg, padding: "2px 6px", borderRadius: 3, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: FT }}>{ws.label}</span>
+                <div style={{ display: "flex", alignItems: "center" }}>
+                  <button onClick={function(e) { e.stopPropagation(); toggleWalk(p.id) }} style={{ background: "none", border: "none", cursor: "pointer", padding: "10px 4px 10px 10px", display: "flex", alignItems: "center", flexShrink: 0 }}>
+                    <span style={{ width: 16, height: 16, borderRadius: 3, display: "flex", alignItems: "center", justifyContent: "center", background: walkSel.has(p.id) ? CL.acc : "transparent", border: "1.5px solid " + (walkSel.has(p.id) ? CL.acc : CL.bL), color: "#fff", fontSize: 10, fontWeight: 700 }}>{walkSel.has(p.id) ? "✓" : ""}</span>
+                  </button>
+                  <button onClick={function() { setExp(op ? null : p.id) }} style={{ display: "flex", flex: 1, justifyContent: "space-between", alignItems: "center", padding: "10px 12px 10px 4px", background: "none", border: "none", cursor: "pointer", fontFamily: FT, textAlign: "left", gap: 6 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
+                        <span style={{ fontSize: 11, color: CL.wh, fontWeight: 600 }}>{p.name}</span>
+                        <span style={{ fontSize: 7, color: ws.color, background: ws.bg, padding: "2px 6px", borderRadius: 3, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: FT }}>{ws.label}</span>
+                      </div>
+                      {p.type && <p style={{ margin: "1px 0 0", fontSize: 9, color: CL.dim }}>{p.type}{p.address ? " · " + p.address : ""}</p>}
                     </div>
-                    {p.type && <p style={{ margin: "1px 0 0", fontSize: 9, color: CL.dim }}>{p.type}{p.address ? " · " + p.address : ""}</p>}
-                  </div>
-                  <span style={{ fontSize: 7, color: sc.color, background: sc.bg, padding: "2px 6px", borderRadius: 3, textTransform: "uppercase", fontWeight: 700, fontFamily: FT, whiteSpace: "nowrap" }}>{sc.icon} {sc.label}</span>
-                </button>
+                    <span style={{ fontSize: 7, color: sc.color, background: sc.bg, padding: "2px 6px", borderRadius: 3, textTransform: "uppercase", fontWeight: 700, fontFamily: FT, whiteSpace: "nowrap" }}>{sc.icon} {sc.label}</span>
+                  </button>
+                </div>
                 {op && <div style={{ padding: "0 12px 10px", borderTop: "1px solid " + CL.border }}>
                   {p.issues && p.issues.length > 0 && <div style={{ marginTop: 8 }}><span style={{ fontSize: 7, color: "#E8606A", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>Issues</span><div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 3 }}>{p.issues.map(function(x, i) { return <span key={i} style={{ fontSize: 9, color: "#E8606A", background: "#3B141866", padding: "2px 6px", borderRadius: 3 }}>{x}</span> })}</div></div>}
                   {p.talkingPoints && p.talkingPoints.length > 0 && <div style={{ marginTop: 8, background: CL.bg, padding: "8px 10px", borderRadius: 5 }}><span style={{ fontSize: 7, color: CL.acc, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>Talking Points</span>{p.talkingPoints.map(function(t, i) { return <p key={i} style={{ margin: "4px 0 0", fontSize: 10, color: CL.text, lineHeight: 1.4 }}>→ {t}</p> })}</div>}
