@@ -40,7 +40,10 @@ async function callScout(prompt) {
     body: JSON.stringify({ prompt }),
   })
   if (!r.ok) throw new Error("API " + r.status)
-  var d = await r.json()
+  var body = await r.text()
+  var lines = body.split("\n").filter(function(l) { return l.startsWith("data: ") })
+  if (lines.length === 0) throw new Error("Empty response")
+  var d = JSON.parse(lines[lines.length - 1].slice(6))
   if (d.error) throw new Error(d.error)
   return d.text
 }
