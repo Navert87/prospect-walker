@@ -145,6 +145,8 @@ export default function App() {
   var [addNhCity, setAddNhCity] = useState(null)
   var [addNhInput, setAddNhInput] = useState("")
   var [userCoords, setUserCoords] = useState(null)
+  var [nearbyPrompt, setNearbyPrompt] = useState(false)
+  var [nearbyInput, setNearbyInput] = useState("")
 
   useEffect(function() {
     loadData().then(function(d) {
@@ -289,67 +291,90 @@ export default function App() {
     setPw("")
   }
 
+  var doNearbyWithCoords = async function(lat, lng) {
+    try {
+      setBusy("Identifying neighborhood...")
+      var loc = await identifyLocation(lat, lng)
+      setBusy("Finding businesses in " + loc.neighborhood + "...")
+      var biz = await findBiz(loc.neighborhood, loc.city, { lat: lat, lng: lng })
+      var targetCityId = null, targetNhId = null
+      Object.keys(data.cities).forEach(function(id) {
+        if (data.cities[id].name.toLowerCase() === loc.city.toLowerCase()) targetCityId = id
+      })
+      if (targetCityId && data.cities[targetCityId]) {
+        var nhs = data.cities[targetCityId].neighborhoods || {}
+        Object.keys(nhs).forEach(function(id) {
+          if (nhs[id].name.toLowerCase() === loc.neighborhood.toLowerCase()) targetNhId = id
+        })
+      }
+      if (!targetCityId) targetCityId = uid()
+      if (!targetNhId) targetNhId = uid()
+      var addedCount = 0
+      deepSet(function(d) {
+        if (!d.cities[targetCityId]) d.cities[targetCityId] = { id: targetCityId, name: loc.city, neighborhoods: {} }
+        if (!d.cities[targetCityId].neighborhoods[targetNhId]) d.cities[targetCityId].neighborhoods[targetNhId] = { id: targetNhId, name: loc.neighborhood, description: "", prospects: {} }
+        var pros = d.cities[targetCityId].neighborhoods[targetNhId].prospects
+        var existing = Object.values(pros).map(function(p) { return p.name.toLowerCase().trim() })
+        biz.forEach(function(b) {
+          var bName = (b.name || "").toLowerCase().trim()
+          if (!bName || existing.indexOf(bName) !== -1) return
+          existing.push(bName)
+          addedCount++
+          var pid = uid()
+          pros[pid] = {
+            id: pid, name: b.name || "Unknown", address: b.address || "", type: b.type || "",
+            webScore: "unknown", currentWebsite: null, status: "not_visited",
+            notes: "", contact: "", emailed: false, visitedAt: null,
+          }
+        })
+      })
+      setCId(targetCityId)
+      setNId(targetNhId)
+      setLastScoutCount(addedCount)
+      setTimeout(function() { setLastScoutCount(null) }, 5000)
+      setFilt("all")
+      setExp(null)
+      setWalkSel(new Set())
+      setView("list")
+    } catch(e) { setErr("Nearby scout failed: " + e.message) }
+    setBusy("")
+  }
+
   var doNearby = function() {
     setErr("")
-    if (!navigator.geolocation) { setErr("Geolocation not supported"); return }
     setBusy("Getting location...")
+    if (!navigator.geolocation) {
+      setBusy("")
+      setNearbyPrompt(true)
+      return
+    }
     navigator.geolocation.getCurrentPosition(
-      async function(pos) {
-        var lat = pos.coords.latitude
-        var lng = pos.coords.longitude
-        try {
-          setBusy("Identifying neighborhood...")
-          var loc = await identifyLocation(lat, lng)
-          setBusy("Finding businesses in " + loc.neighborhood + "...")
-          var biz = await findBiz(loc.neighborhood, loc.city, { lat: lat, lng: lng })
-          var targetCityId = null, targetNhId = null
-          Object.keys(data.cities).forEach(function(id) {
-            if (data.cities[id].name.toLowerCase() === loc.city.toLowerCase()) targetCityId = id
-          })
-          if (targetCityId && data.cities[targetCityId]) {
-            var nhs = data.cities[targetCityId].neighborhoods || {}
-            Object.keys(nhs).forEach(function(id) {
-              if (nhs[id].name.toLowerCase() === loc.neighborhood.toLowerCase()) targetNhId = id
-            })
-          }
-          if (!targetCityId) targetCityId = uid()
-          if (!targetNhId) targetNhId = uid()
-          var addedCount = 0
-          deepSet(function(d) {
-            if (!d.cities[targetCityId]) d.cities[targetCityId] = { id: targetCityId, name: loc.city, neighborhoods: {} }
-            if (!d.cities[targetCityId].neighborhoods[targetNhId]) d.cities[targetCityId].neighborhoods[targetNhId] = { id: targetNhId, name: loc.neighborhood, description: "", prospects: {} }
-            var pros = d.cities[targetCityId].neighborhoods[targetNhId].prospects
-            var existing = Object.values(pros).map(function(p) { return p.name.toLowerCase().trim() })
-            biz.forEach(function(b) {
-              var bName = (b.name || "").toLowerCase().trim()
-              if (!bName || existing.indexOf(bName) !== -1) return
-              existing.push(bName)
-              addedCount++
-              var pid = uid()
-              pros[pid] = {
-                id: pid, name: b.name || "Unknown", address: b.address || "", type: b.type || "",
-                webScore: "unknown", currentWebsite: null, status: "not_visited",
-                notes: "", contact: "", emailed: false, visitedAt: null,
-              }
-            })
-          })
-          setCId(targetCityId)
-          setNId(targetNhId)
-          setLastScoutCount(addedCount)
-          setTimeout(function() { setLastScoutCount(null) }, 5000)
-          setFilt("all")
-          setExp(null)
-          setWalkSel(new Set())
-          setView("list")
-        } catch(e) { setErr("Nearby scout failed: " + e.message) }
-        setBusy("")
-      },
+      function(pos) { doNearbyWithCoords(pos.coords.latitude, pos.coords.longitude) },
       function() {
         setBusy("")
-        setErr("Location access denied")
+        setNearbyPrompt(true)
       },
       { enableHighAccuracy: true, timeout: 10000 }
     )
+  }
+
+  var doNearbyManual = async function() {
+    var loc = nearbyInput.trim()
+    if (!loc) return
+    setNearbyPrompt(false)
+    setNearbyInput("")
+    setBusy("Looking up location...")
+    setErr("")
+    try {
+      var raw = await callScout("What are the GPS coordinates of this location: " + loc + "? Return ONLY JSON: {\"lat\":number,\"lng\":number}")
+      var coords = grabJSON(raw)
+      if (!coords || typeof coords.lat !== "number" || typeof coords.lng !== "number") throw new Error("Could not find that location")
+      if (Array.isArray(coords)) coords = coords[0]
+      await doNearbyWithCoords(coords.lat, coords.lng)
+    } catch(e) {
+      setErr("Location lookup failed: " + e.message)
+      setBusy("")
+    }
   }
 
   if (!authed) return (
@@ -424,7 +449,15 @@ export default function App() {
               placeholder="Enter a city..." style={{ flex: 1, background: CL.card, border: "1px solid " + CL.border, borderRadius: 8, color: CL.wh, fontSize: 13, padding: "10px 12px", fontFamily: FT, outline: "none", boxSizing: "border-box" }} />
             <button onClick={doAddCity} style={{ background: CL.acc, border: "none", borderRadius: 8, color: "#fff", fontSize: 11, padding: "10px 14px", cursor: "pointer", fontFamily: FT, fontWeight: 600 }}>+ City</button>
           </div>
-          <button onClick={doNearby} style={{ display: "block", width: "100%", background: CL.card, border: "1px solid " + CL.border, borderRadius: 8, color: CL.text, fontSize: 11, padding: "10px 14px", cursor: "pointer", fontFamily: FT, fontWeight: 500, marginBottom: 20, textAlign: "center" }}>📍 Prospect Nearby</button>
+          <button onClick={doNearby} style={{ display: "block", width: "100%", background: CL.card, border: "1px solid " + CL.border, borderRadius: nearbyPrompt ? "8px 8px 0 0" : 8, color: CL.text, fontSize: 11, padding: "10px 14px", cursor: "pointer", fontFamily: FT, fontWeight: 500, marginBottom: nearbyPrompt ? 0 : 20, textAlign: "center" }}>📍 Prospect Nearby</button>
+          {nearbyPrompt && <div style={{ background: CL.card, border: "1px solid " + CL.border, borderTop: "none", borderRadius: "0 0 8px 8px", padding: "10px 12px", marginBottom: 20 }}>
+            <p style={{ margin: "0 0 8px", fontSize: 10, color: CL.mut }}>Can't get GPS. Where are you?</p>
+            <div style={{ display: "flex", gap: 6 }}>
+              <input value={nearbyInput} onChange={function(e) { setNearbyInput(e.target.value) }} onKeyDown={function(e) { if (e.key === "Enter") doNearbyManual() }} placeholder="e.g. Cafe Ladro, Phinney Ridge" autoFocus style={{ flex: 1, background: CL.bg, border: "1px solid " + CL.border, borderRadius: 6, color: CL.wh, fontSize: 11, padding: "8px 10px", fontFamily: FT, outline: "none", boxSizing: "border-box" }} />
+              <button onClick={doNearbyManual} style={{ background: CL.acc, border: "none", borderRadius: 6, color: "#fff", fontSize: 10, padding: "8px 12px", cursor: "pointer", fontFamily: FT, fontWeight: 600 }}>Go</button>
+              <button onClick={function() { setNearbyPrompt(false); setNearbyInput("") }} style={{ background: "none", border: "1px solid " + CL.border, borderRadius: 6, color: CL.dim, fontSize: 10, padding: "8px 8px", cursor: "pointer", fontFamily: FT }}>✕</button>
+            </div>
+          </div>}
           {ErrBox}
           {cities.length === 0 ? (
             <div style={{ textAlign: "center", padding: "50px 20px", color: CL.dim }}>
