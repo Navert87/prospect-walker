@@ -17,6 +17,7 @@ const WS = {
 }
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).substr(2, 6)
+function cleanUrl(u) { if (!u || typeof u !== "string" || !u.trim()) return null; u = u.trim(); if (u === "null" || u === "N/A" || u === "none") return null; if (!u.startsWith("http://") && !u.startsWith("https://")) u = "https://" + u; return u }
 const CL = { bg: "#0B1121", card: "#131B2E", border: "#1E2D4A", bL: "#2A3F65", text: "#D4DCE8", mut: "#6B7FA3", dim: "#3E5278", wh: "#F0F4F8", acc: "#4F8EF7", accBg: "#162044", warn: "#F5C542", warnBg: "#3D2E0A" }
 const FT = "'Geist Mono','SF Mono','JetBrains Mono',ui-monospace,monospace"
 const APP_PW = import.meta.env.VITE_APP_PASSWORD || ""
@@ -52,7 +53,7 @@ async function getNHs(city) {
 }
 
 async function scoutBiz(nh, city) {
-  var raw = await callScout("Search for real small businesses in " + nh + ", " + city + ". I run Hypandra Consulting offering web development, AI integration, and digital consulting. Find 10-15 real small businesses (NOT chains) within walking distance of each other (roughly a half-mile radius) with weak web/digital presence. CRITICAL: ONLY return businesses you can verify actually exist at a real street address. Do NOT fabricate or guess. If you cannot verify a business, exclude it. Better to return fewer verified results than many unverified ones. ONLY return a JSON array, no other text: [{\"name\":\"Name\",\"address\":\"street\",\"type\":\"category\",\"webScore\":\"poor|weak|decent|strong\",\"issues\":[\"no website\"],\"talkingPoints\":[\"pitch idea\"],\"currentWebsite\":\"url or null\"}] Sort by proximity so they form a walkable route.")
+  var raw = await callScout("You are helping me find real, currently operating small businesses to prospect for web development services in " + nh + ", " + city + ".\n\nCRITICAL RULES:\n- ONLY return businesses you can verify actually exist RIGHT NOW via web search\n- Every business MUST have a real, verifiable street address you found online\n- If you cannot find a business's actual address on Google Maps, Yelp, or their own website, DO NOT include it\n- NO guessing, NO fabricating, NO \"likely exists\" — verified or excluded\n- Search for each business individually to confirm it is real and currently open\n- Fewer verified results is better than more unverified results — I'd rather get 5 real ones than 15 fake ones\n\nTARGET: Small, independent businesses (NOT chains, NOT franchises) that have weak or poor digital presence. Look for: no website, outdated website, no social media, poor Google Business listing, no online ordering/booking, bad mobile experience.\n\nI run Hypandra Consulting offering web development, AI integration, and digital consulting.\n\nAfter searching and verifying, return ONLY a JSON array. No other text, no markdown, no backticks:\n[{\"name\":\"Exact Business Name\",\"address\":\"Full verified street address\",\"type\":\"category\",\"webScore\":\"poor|weak|decent|strong\",\"issues\":[\"specific issue found\"],\"talkingPoints\":[\"specific pitch based on their actual issues\"],\"currentWebsite\":\"https://exact-url-found.com or null\",\"verifiedVia\":\"where you confirmed this business exists (google maps, yelp, their website, etc)\"}]\n\nFor currentWebsite: only include a URL you actually found and visited. Always include https://. If no website exists, use null.\nSort by weakest web presence first.")
   var p = grabJSON(raw)
   if (!p || !Array.isArray(p)) throw new Error("Parse failed - try again")
   return p
@@ -67,7 +68,7 @@ async function identifyLocation(lat, lng) {
 }
 
 async function lookupBiz(name, nhName, cityName) {
-  var raw = await callScout("Look up the business called '" + name + "' in " + nhName + ", " + cityName + ". Return a single JSON object: {\"address\":\"street address\",\"type\":\"category\",\"webScore\":\"poor|weak|decent|strong\",\"issues\":[\"issue1\"],\"talkingPoints\":[\"point1\"],\"currentWebsite\":\"url or null\"}. If you cannot verify this business exists, return {\"notFound\":true}.")
+  var raw = await callScout("Look up the business called '" + name + "' in " + nhName + ", " + cityName + ".\n\nCRITICAL: Only return data you can verify via web search. Search Google Maps, Yelp, and the web for this exact business. If you cannot confirm it exists and is currently operating, return {\"notFound\":true}.\n\nIf verified, return a single JSON object, no other text:\n{\"address\":\"Full verified street address\",\"type\":\"category\",\"webScore\":\"poor|weak|decent|strong\",\"issues\":[\"specific issues found\"],\"talkingPoints\":[\"specific pitch ideas\"],\"currentWebsite\":\"https://exact-url-found.com or null\",\"verifiedVia\":\"where you confirmed this business exists\"}\n\nFor currentWebsite: only include a URL you actually found. Always include https://. If no website exists, use null.")
   var p = grabJSON(raw)
   if (!p) throw new Error("Parse failed")
   if (Array.isArray(p)) return p[0]
@@ -82,7 +83,7 @@ function makeWalkUrl(list, originCoords) {
   var dest = a[a.length - 1]
   var waypoints = originCoords ? a.slice(0, -1) : a.slice(1, -1)
   var u = "https://www.google.com/maps/dir/?api=1&origin=" + origin + "&destination=" + dest + "&travelmode=walking"
-  if (waypoints.length > 0) u += "&waypoints=" + waypoints.join("|")
+  if (waypoints.length > 0) u += "&waypoints=optimize:true|" + waypoints.join("|")
   return u
 }
 
@@ -201,7 +202,7 @@ export default function App() {
           pros[pid] = {
             id: pid, name: b.name || "Unknown", address: b.address || "", type: b.type || "",
             webScore: b.webScore || "weak", issues: b.issues || [], talkingPoints: b.talkingPoints || [],
-            currentWebsite: b.currentWebsite || null, status: "not_visited", notes: "",
+            currentWebsite: cleanUrl(b.currentWebsite), status: "not_visited", notes: "",
             contact: "", visitedAt: null,
           }
         })
@@ -269,7 +270,7 @@ export default function App() {
           webScore: result.webScore || form.webScore || "weak",
           issues: result.issues || [],
           talkingPoints: result.talkingPoints || [],
-          currentWebsite: result.currentWebsite || null,
+          currentWebsite: cleanUrl(result.currentWebsite),
         }))
       }
     } catch(e) { setErr("Lookup failed: " + e.message) }
@@ -316,7 +317,7 @@ export default function App() {
               pros[pid] = {
                 id: pid, name: b.name || "Unknown", address: b.address || "", type: b.type || "",
                 webScore: b.webScore || "weak", issues: b.issues || [], talkingPoints: b.talkingPoints || [],
-                currentWebsite: b.currentWebsite || null, status: "not_visited", notes: "",
+                currentWebsite: cleanUrl(b.currentWebsite), status: "not_visited", notes: "",
                 contact: "", visitedAt: null,
               }
             })
@@ -568,7 +569,7 @@ export default function App() {
                 {op && <div style={{ padding: "0 12px 10px", borderTop: "1px solid " + CL.border }}>
                   {p.issues && p.issues.length > 0 && <div style={{ marginTop: 8 }}><span style={{ fontSize: 7, color: "#E8606A", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>Issues</span><div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 3 }}>{p.issues.map(function(x, i) { return <span key={i} style={{ fontSize: 9, color: "#E8606A", background: "#3B141866", padding: "2px 6px", borderRadius: 3 }}>{x}</span> })}</div></div>}
                   {p.talkingPoints && p.talkingPoints.length > 0 && <div style={{ marginTop: 8, background: CL.bg, padding: "8px 10px", borderRadius: 5 }}><span style={{ fontSize: 7, color: CL.acc, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>Talking Points</span>{p.talkingPoints.map(function(t, i) { return <p key={i} style={{ margin: "4px 0 0", fontSize: 10, color: CL.text, lineHeight: 1.4 }}>→ {t}</p> })}</div>}
-                  {p.currentWebsite && <a href={(p.currentWebsite.startsWith("http") ? "" : "https://") + p.currentWebsite} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 6, fontSize: 9, color: CL.acc }}>🔗 {p.currentWebsite}</a>}
+                  {p.currentWebsite && <a href={p.currentWebsite} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 6, fontSize: 9, color: CL.acc }}>🔗 {p.currentWebsite}</a>}
                   {p.contact && <div style={{ marginTop: 8 }}><span style={{ fontSize: 7, color: "#60B8F7", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>Contact</span><p style={{ margin: "3px 0 0", fontSize: 10, color: CL.text, lineHeight: 1.4 }}>👤 {p.contact}</p></div>}
                   {p.notes && <div style={{ marginTop: 8 }}><span style={{ fontSize: 7, color: CL.dim, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>Notes</span><p style={{ margin: "3px 0 0", fontSize: 10, color: CL.text, lineHeight: 1.4 }}>{p.notes}</p></div>}
                   {p.visitedAt && <p style={{ margin: "6px 0 0", fontSize: 8, color: CL.dim }}>Visited {new Date(p.visitedAt).toLocaleDateString()}</p>}
@@ -613,7 +614,7 @@ export default function App() {
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={function() {
               if (!form.name || !form.name.trim()) return
-              var f = { name: form.name.trim(), address: (form.address || "").trim(), type: (form.type || "").trim(), webScore: form.webScore || "weak", contact: (form.contact || "").trim(), notes: (form.notes || "").trim(), status: form.status || "not_visited", issues: form.issues || [], talkingPoints: form.talkingPoints || [], currentWebsite: form.currentWebsite || null }
+              var f = { name: form.name.trim(), address: (form.address || "").trim(), type: (form.type || "").trim(), webScore: form.webScore || "weak", contact: (form.contact || "").trim(), notes: (form.notes || "").trim(), status: form.status || "not_visited", issues: form.issues || [], talkingPoints: form.talkingPoints || [], currentWebsite: cleanUrl(form.currentWebsite) }
               if (isEd) { doUpdateP(eId, f); setEId(null); setView("list") } else doAddP(f)
             }} style={{ flex: 1, background: CL.acc, border: "none", borderRadius: 7, color: "#fff", fontSize: 12, padding: "10px 0", cursor: "pointer", fontFamily: FT, fontWeight: 600 }}>Save</button>
             {isEd && <button onClick={function() { if (confirm("Delete?")) { doDelP(eId); setEId(null) } }} style={{ background: "#3B1418", border: "none", borderRadius: 7, color: "#E8606A", fontSize: 11, padding: "10px 14px", cursor: "pointer", fontFamily: FT }}>Delete</button>}
