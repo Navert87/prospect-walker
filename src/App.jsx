@@ -533,7 +533,7 @@ export default function App() {
           </div>
           <div style={{ display: "flex", gap: 5, marginBottom: 10 }}>
             <button onClick={function() { setForm({ name: "", address: "", type: "", webScore: "weak", contact: "", notes: "", status: "not_visited" }); setEId(null); setView("form") }} style={{ background: CL.card, border: "1px solid " + CL.border, borderRadius: 7, color: CL.text, fontSize: 10, padding: "7px 10px", cursor: "pointer", fontFamily: FT }}>+ Manual</button>
-            <button onClick={function() { if (confirm("Delete " + nh.name + "?")) doDelNh() }} style={{ background: "none", border: "1px solid " + CL.border, borderRadius: 7, color: CL.dim, fontSize: 10, padding: "7px 8px", cursor: "pointer", fontFamily: FT }}>🗑</button>
+            {walkSel.size > 0 && <button onClick={function() { if (confirm("Delete " + walkSel.size + " selected business" + (walkSel.size !== 1 ? "es" : "") + "?")) { deepSet(function(d) { walkSel.forEach(function(pid) { delete d.cities[cId].neighborhoods[nId].prospects[pid] }) }); setWalkSel(new Set()); setExp(null) } }} style={{ background: "#3B1418", border: "1px solid #E8606A33", borderRadius: 7, color: "#E8606A", fontSize: 10, padding: "7px 10px", cursor: "pointer", fontFamily: FT }}>🗑 Delete ({walkSel.size})</button>}
           </div>
           {ErrBox}
           <div style={{ display: "flex", gap: 3, marginBottom: 12, flexWrap: "wrap" }}>
