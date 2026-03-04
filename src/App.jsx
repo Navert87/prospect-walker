@@ -52,8 +52,11 @@ async function getNHs(city) {
   return p
 }
 
-async function scoutBiz(nh, city) {
-  var raw = await callScout("Search the web to find real, currently operating small independent businesses in " + nh + ", " + city + " within walking distance (roughly half-mile radius of the neighborhood center).\n\nFor each business you find, search for their website, Google Business listing, social media, and online reviews to evaluate their digital presence.\n\nI run Hypandra Consulting offering web development, AI integration, and digital consulting for small businesses.\n\nRules:\n- ONLY include businesses you verified exist by finding them in web search results\n- Every business must have a real street address you found online\n- NO chains or franchises\n- If you can't verify a business exists, leave it out — 5 verified is better than 15 guessed\n- Stay within the neighborhood, don't wander to other parts of the city\n\nFor each business, actually visit their website (if they have one) and check for: outdated design, no mobile responsiveness, no online booking/ordering, broken links, missing SSL. Check if they have Google Business listing, Yelp presence, social media accounts.\n\nReturn ONLY a JSON array, no other text:\n[{\"name\":\"Exact Name\",\"address\":\"Full street address\",\"type\":\"category\",\"webScore\":\"poor|weak|decent|strong\",\"issues\":[\"specific issue you found\"],\"talkingPoints\":[\"specific pitch idea based on their actual issues\"],\"currentWebsite\":\"https://actual-url.com or null\"}]\n\nSort by weakest web presence first.")
+async function scoutBiz(nh, city, coords) {
+  var geo = coords
+    ? "CRITICAL: Only return businesses within a half mile (roughly 10 blocks) of coordinates " + coords.lat + ", " + coords.lng + ". Every business must be walkable from this location in under 10 minutes. Do NOT include anything farther away, even if it's a great prospect.\n\n"
+    : "CRITICAL GEOGRAPHIC CONSTRAINT: ONLY return businesses physically located within the " + nh + " neighborhood of " + city + ". Do NOT include businesses from adjacent or nearby neighborhoods. If you're unsure whether a business is in " + nh + ", leave it out. I will be walking to these — they need to be within a 10-15 minute walk of each other. Every address must be verifiably within " + nh + " boundaries. If a result seems to be from a different part of the city, exclude it.\n\n"
+  var raw = await callScout(geo + "Search the web to find real, currently operating small independent businesses in " + nh + ", " + city + ".\n\nFor each business you find, search for their website, Google Business listing, social media, and online reviews to evaluate their digital presence.\n\nI run Hypandra Consulting offering web development, AI integration, and digital consulting for small businesses.\n\nRules:\n- ONLY include businesses you verified exist by finding them in web search results\n- Every business must have a real street address you found online\n- NO chains or franchises\n- If you can't verify a business exists, leave it out — 5 verified is better than 15 guessed\n- Stay within the neighborhood, don't wander to other parts of the city\n\nFor each business, actually visit their website (if they have one) and check for: outdated design, no mobile responsiveness, no online booking/ordering, broken links, missing SSL. Check if they have Google Business listing, Yelp presence, social media accounts.\n\nReturn ONLY a JSON array, no other text:\n[{\"name\":\"Exact Name\",\"address\":\"Full street address\",\"type\":\"category\",\"webScore\":\"poor|weak|decent|strong\",\"issues\":[\"specific issue you found\"],\"talkingPoints\":[\"specific pitch idea based on their actual issues\"],\"currentWebsite\":\"https://actual-url.com or null\"}]\n\nSort by weakest web presence first.")
   var p = grabJSON(raw)
   if (!p || !Array.isArray(p)) throw new Error("Parse failed - try again")
   return p
@@ -320,7 +323,7 @@ export default function App() {
           setBusy("Identifying neighborhood...")
           var loc = await identifyLocation(lat, lng)
           setBusy("Scouting " + loc.neighborhood + "...")
-          var biz = await scoutBiz(loc.neighborhood, loc.city)
+          var biz = await scoutBiz(loc.neighborhood, loc.city, { lat: lat, lng: lng })
           var targetCityId = null, targetNhId = null
           Object.keys(data.cities).forEach(function(id) {
             if (data.cities[id].name.toLowerCase() === loc.city.toLowerCase()) targetCityId = id
