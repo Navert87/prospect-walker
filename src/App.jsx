@@ -10,6 +10,7 @@ const STATUS = {
 }
 
 const WS = {
+  unknown: { label: "?", color: "#7B8BA5", bg: "#1A2236" },
   poor: { label: "Poor", color: "#E8606A", bg: "#3B1418" },
   weak: { label: "Weak", color: "#F5C542", bg: "#3D2E0A" },
   decent: { label: "Decent", color: "#60B8F7", bg: "#0D2847" },
@@ -55,36 +56,20 @@ async function getNHs(city) {
   return p
 }
 
-async function scoutBiz(nh, city, coords) {
+async function findBiz(nh, city, coords) {
   var geo = coords
-    ? "I am standing at GPS coordinates " + coords.lat + ", " + coords.lng + " in " + nh + ", " + city + ". Find small independent businesses within a HALF MILE of my location. Every business MUST be walkable from me in under 10 minutes. Do NOT include anything farther away."
-    : "List 10-15 small independent businesses (not chains) in the " + nh + " neighborhood of " + city + ". ONLY businesses physically within " + nh + ". Do NOT include businesses from adjacent neighborhoods. If unsure whether it's in " + nh + ", leave it out."
-  var raw = await callScout(geo + "\n\nRules:\n- Search the web to verify each business currently exists\n- Every business MUST have a real street address\n- NO chains or franchises\n- 5 verified is better than 15 guessed\n\nReturn ONLY a JSON array:\n[{\"name\":\"Exact Business Name\",\"address\":\"Full street address\",\"type\":\"category\"}]")
+    ? "STRICT RADIUS: Only list businesses within a half mile of coordinates " + coords.lat + ", " + coords.lng + ". Every business must be walkable in under 10 minutes. Do NOT include anything farther away.\n\n"
+    : "STRICT GEOGRAPHIC CONSTRAINT: ONLY list businesses physically located within " + nh + " of " + city + ". Do NOT include businesses from adjacent neighborhoods.\n\n"
+  var raw = await callScout(geo + "List 10-15 small independent businesses (not chains) in " + nh + ", " + city + ".\n\nRules:\n- Search the web to verify each business currently exists\n- Every business MUST have a real street address\n- NO chains or franchises\n- 5 verified is better than 15 guessed\n\nReturn ONLY a JSON array:\n[{\"name\":\"Exact Business Name\",\"address\":\"Full street address\",\"type\":\"category\"}]")
   var found = grabJSON(raw)
   if (!found || !Array.isArray(found) || found.length === 0) throw new Error("No businesses found - try again")
   return found
-}
-
-async function checkWebPresence(name, address, city) {
-  var raw = await callScout("Search the web for '" + name + "' at " + address + " in " + city + ". Find their website, Google Business listing, social media, and online reviews. If they have a website, check for: outdated design, no mobile responsiveness, no online booking/ordering, broken links, missing SSL.\n\nEvaluate their digital presence for Hypandra Consulting (we offer web development, AI integration, and digital consulting).\n\nReturn ONLY JSON:\n{\"webScore\":\"poor|weak|decent|strong\",\"issues\":[\"specific issue\"],\"talkingPoints\":[\"pitch idea\"],\"currentWebsite\":\"url or null\"}")
-  var p = grabJSON(raw)
-  if (!p) throw new Error("Parse failed")
-  if (Array.isArray(p)) return p[0]
-  return p
 }
 
 async function identifyLocation(lat, lng) {
   var raw = await callScout("What is the most specific, commonly-used neighborhood name for GPS coordinates [" + lat + ", " + lng + "]? Use the local name residents and businesses would use (e.g. 'Capitol Hill' not 'Central Seattle', 'Fremont' not 'North Seattle'). Return ONLY a JSON object, no other text: {\"neighborhood\":\"Specific Neighborhood Name\",\"city\":\"City Name\"}")
   var p = grabJSON(raw)
   if (!p || !p.neighborhood || !p.city) throw new Error("Could not identify location")
-  if (Array.isArray(p)) return p[0]
-  return p
-}
-
-async function lookupBiz(name, nhName, cityName) {
-  var raw = await callScout("Search the web for the business called '" + name + "' in " + nhName + ", " + cityName + ".\n\nSearch for their website, Google Business listing, social media, and online reviews. Actually visit their website if they have one and check for: outdated design, no mobile responsiveness, no online booking/ordering, broken links, missing SSL.\n\nIf you cannot verify this business exists via web search, return {\"notFound\":true}.\n\nIf verified, return a single JSON object, no other text:\n{\"address\":\"Full street address\",\"type\":\"category\",\"webScore\":\"poor|weak|decent|strong\",\"issues\":[\"specific issues you found\"],\"talkingPoints\":[\"specific pitch ideas based on their actual issues\"],\"currentWebsite\":\"https://actual-url.com or null\"}\n\nFor currentWebsite: only include a URL you actually found. If no website exists, use null.")
-  var p = grabJSON(raw)
-  if (!p) throw new Error("Parse failed")
   if (Array.isArray(p)) return p[0]
   return p
 }
@@ -97,7 +82,7 @@ function makeWalkUrl(list, originCoords) {
   var dest = a[a.length - 1]
   var waypoints = originCoords ? a.slice(0, -1) : a.slice(1, -1)
   var u = "https://www.google.com/maps/dir/?api=1&origin=" + origin + "&destination=" + dest + "&travelmode=walking"
-  if (waypoints.length > 0) u += "&waypoints=" + waypoints.join("|")
+  if (waypoints.length > 0) u += "&waypoints=optimize:true|" + waypoints.join("|")
   return u
 }
 
@@ -109,7 +94,7 @@ function csvEsc(v) {
 }
 
 function toCSV(prospects, includeLocation) {
-  var cols = ["Name", "Address", "Type", "Web Score", "Status", "Emailed", "Contact", "Notes", "Issues", "Talking Points", "Website", "Visited At"]
+  var cols = ["Name", "Address", "Type", "Web Score", "Status", "Emailed", "Contact", "Notes", "Website", "Visited At"]
   if (includeLocation) cols.push("Neighborhood", "City")
   var rows = [cols.join(",")]
   prospects.forEach(function(p) {
@@ -117,7 +102,6 @@ function toCSV(prospects, includeLocation) {
       csvEsc(p.name), csvEsc(p.address), csvEsc(p.type), csvEsc(p.webScore),
       csvEsc((STATUS[p.status] || {}).label || p.status), csvEsc(p.emailed ? "Yes" : "No"),
       csvEsc(p.contact), csvEsc(p.notes),
-      csvEsc((p.issues || []).join("; ")), csvEsc((p.talkingPoints || []).join("; ")),
       csvEsc(p.currentWebsite), csvEsc(p.visitedAt ? new Date(p.visitedAt).toLocaleDateString() : ""),
     ]
     if (includeLocation) { row.push(csvEsc(p._neighborhood)); row.push(csvEsc(p._city)) }
@@ -158,8 +142,6 @@ export default function App() {
   var [openCity, setOpenCity] = useState(null)
   var [walkSel, setWalkSel] = useState(new Set())
   var [lastScoutCount, setLastScoutCount] = useState(null)
-  var [lookingUp, setLookingUp] = useState(false)
-  var [checkingWeb, setCheckingWeb] = useState(null)
   var [addNhCity, setAddNhCity] = useState(null)
   var [addNhInput, setAddNhInput] = useState("")
   var [userCoords, setUserCoords] = useState(null)
@@ -232,9 +214,9 @@ export default function App() {
 
   var doScout = async function() {
     if (!nh || !city) return
-    setBusy("Scouting " + nh.name + "..."); setErr("")
+    setBusy("Finding businesses in " + nh.name + "..."); setErr("")
     try {
-      var biz = await scoutBiz(nh.name, city.name)
+      var biz = await findBiz(nh.name, city.name)
       var addedCount = 0
       deepSet(function(d) {
         var pros = d.cities[cId].neighborhoods[nId].prospects
@@ -247,9 +229,8 @@ export default function App() {
           var pid = uid()
           pros[pid] = {
             id: pid, name: b.name || "Unknown", address: b.address || "", type: b.type || "",
-            webScore: null, issues: [], talkingPoints: [],
-            currentWebsite: null, status: "not_visited", notes: "",
-            contact: "", visitedAt: null,
+            webScore: "unknown", currentWebsite: null, status: "not_visited",
+            notes: "", contact: "", emailed: false, visitedAt: null,
           }
         })
       })
@@ -268,27 +249,10 @@ export default function App() {
     })
   }
 
-  var doCheckWeb = async function(pid) {
-    if (!city) return
-    var p = nh.prospects[pid]
-    if (!p) return
-    setCheckingWeb(pid)
-    try {
-      var result = await checkWebPresence(p.name, p.address, city.name)
-      doUpdateP(pid, {
-        webScore: result.webScore || "weak",
-        issues: result.issues || [],
-        talkingPoints: result.talkingPoints || [],
-        currentWebsite: cleanUrl(result.currentWebsite),
-      })
-    } catch(e) { setErr("Web check failed: " + e.message) }
-    setCheckingWeb(null)
-  }
-
   var doAddP = function(f) {
     deepSet(function(d) {
       var pid = uid()
-      d.cities[cId].neighborhoods[nId].prospects[pid] = Object.assign({ id: pid, issues: [], talkingPoints: [], contact: "", visitedAt: null }, f)
+      d.cities[cId].neighborhoods[nId].prospects[pid] = Object.assign({ id: pid, contact: "", visitedAt: null, emailed: false }, f)
     })
     setView("list")
   }
@@ -320,27 +284,6 @@ export default function App() {
     setPw("")
   }
 
-  var doLookup = async function() {
-    if (!form.name || !form.name.trim() || !nh || !city) return
-    setLookingUp(true); setErr("")
-    try {
-      var result = await lookupBiz(form.name.trim(), nh.name, city.name)
-      if (result.notFound) {
-        setErr("Business not found — add details manually")
-      } else {
-        setForm(Object.assign({}, form, {
-          address: result.address || form.address || "",
-          type: result.type || form.type || "",
-          webScore: result.webScore || form.webScore || "weak",
-          issues: result.issues || [],
-          talkingPoints: result.talkingPoints || [],
-          currentWebsite: cleanUrl(result.currentWebsite),
-        }))
-      }
-    } catch(e) { setErr("Lookup failed: " + e.message) }
-    setLookingUp(false)
-  }
-
   var doNearby = function() {
     setErr("")
     if (!navigator.geolocation) { setErr("Geolocation not supported"); return }
@@ -352,8 +295,8 @@ export default function App() {
         try {
           setBusy("Identifying neighborhood...")
           var loc = await identifyLocation(lat, lng)
-          setBusy("Scouting " + loc.neighborhood + "...")
-          var biz = await scoutBiz(loc.neighborhood, loc.city, { lat: lat, lng: lng })
+          setBusy("Finding businesses in " + loc.neighborhood + "...")
+          var biz = await findBiz(loc.neighborhood, loc.city, { lat: lat, lng: lng })
           var targetCityId = null, targetNhId = null
           Object.keys(data.cities).forEach(function(id) {
             if (data.cities[id].name.toLowerCase() === loc.city.toLowerCase()) targetCityId = id
@@ -380,9 +323,8 @@ export default function App() {
               var pid = uid()
               pros[pid] = {
                 id: pid, name: b.name || "Unknown", address: b.address || "", type: b.type || "",
-                webScore: null, issues: [], talkingPoints: [],
-                currentWebsite: null, status: "not_visited", notes: "",
-                contact: "", visitedAt: null,
+                webScore: "unknown", currentWebsite: null, status: "not_visited",
+                notes: "", contact: "", emailed: false, visitedAt: null,
               }
             })
           })
@@ -483,7 +425,7 @@ export default function App() {
             <div style={{ textAlign: "center", padding: "50px 20px", color: CL.dim }}>
               <p style={{ fontSize: 24, margin: "0 0 10px", opacity: 0.5 }}>📍</p>
               <p style={{ fontSize: 12, margin: 0 }}>Add a city to start prospecting</p>
-              <p style={{ fontSize: 10, margin: "8px auto 0", lineHeight: 1.5, maxWidth: 280 }}>Auto-find neighborhoods, scout weak web presence, build walking routes</p>
+              <p style={{ fontSize: 10, margin: "8px auto 0", lineHeight: 1.5, maxWidth: 280 }}>Find businesses by neighborhood, build walking routes</p>
             </div>
           ) : cities.map(function(c) {
             var nhs = Object.values(c.neighborhoods || {})
@@ -502,14 +444,14 @@ export default function App() {
                 {op && <div style={{ background: CL.card, border: "1px solid " + CL.bL, borderTop: "none", borderRadius: "0 0 8px 8px", padding: "6px 8px 10px" }}>
                   {nhs.sort(function(a, b) { return a.name.localeCompare(b.name) }).map(function(n) {
                     var s = st(n)
-                    return <button key={n.id} onClick={function() { setCId(c.id); setNId(n.id); setView("list"); setFilt("all"); setExp(null); setErr("") }} style={{ display: "flex", width: "100%", justifyContent: "space-between", alignItems: "center", background: CL.bg, border: "1px solid " + CL.border, borderLeft: "2px solid " + (s.total === 0 ? CL.dim : CL.acc), borderRadius: 6, padding: "9px 12px", marginBottom: 3, cursor: "pointer", fontFamily: FT, textAlign: "left" }}>
+                    return <button key={n.id} onClick={function() { setCId(c.id); setNId(n.id); setView("list"); setFilt("all"); setExp(null); setErr(""); setWalkSel(new Set()) }} style={{ display: "flex", width: "100%", justifyContent: "space-between", alignItems: "center", background: CL.bg, border: "1px solid " + CL.border, borderLeft: "2px solid " + (s.total === 0 ? CL.dim : CL.acc), borderRadius: 6, padding: "9px 12px", marginBottom: 3, cursor: "pointer", fontFamily: FT, textAlign: "left" }}>
                       <span style={{ fontSize: 11, color: CL.wh, fontWeight: 500 }}>{n.name}</span>
                       <div style={{ display: "flex", gap: 3 }}>
                         {s.interested > 0 && <span style={{ fontSize: 8, color: STATUS.interested.color, background: STATUS.interested.bg, padding: "1px 5px", borderRadius: 3, fontWeight: 600, fontFamily: FT }}>★{s.interested}</span>}
                         {s.goBack > 0 && <span style={{ fontSize: 8, color: STATUS.go_back.color, background: STATUS.go_back.bg, padding: "1px 5px", borderRadius: 3, fontWeight: 600, fontFamily: FT }}>↻{s.goBack}</span>}
                         {s.visited > 0 && <span style={{ fontSize: 8, color: STATUS.visited.color, background: STATUS.visited.bg, padding: "1px 5px", borderRadius: 3, fontWeight: 600, fontFamily: FT }}>✓{s.visited}</span>}
                         {s.notVis > 0 && <span style={{ fontSize: 8, color: STATUS.not_visited.color, background: STATUS.not_visited.bg, padding: "1px 5px", borderRadius: 3, fontWeight: 600, fontFamily: FT }}>○{s.notVis}</span>}
-                        {s.total === 0 && <span style={{ fontSize: 8, color: CL.dim }}>scout →</span>}
+                        {s.total === 0 && <span style={{ fontSize: 8, color: CL.dim }}>find →</span>}
                       </div>
                     </button>
                   })}
@@ -523,13 +465,14 @@ export default function App() {
                     <div style={{ display: "flex", gap: 5, marginTop: 4 }}>
                       <button onClick={function() { setAddNhCity(c.id); setAddNhInput("") }} style={{ flex: 1, background: "none", border: "1px dashed " + CL.border, borderRadius: 6, color: CL.dim, fontSize: 10, padding: "7px 12px", cursor: "pointer", fontFamily: FT, textAlign: "center" }}>+ Neighborhood</button>
                       {tp > 0 && <button onClick={function() { var all = []; nhs.forEach(function(n) { Object.values(n.prospects || {}).forEach(function(p) { all.push(Object.assign({}, p, { _neighborhood: n.name, _city: c.name })) }) }); toCSV(all, true) }} style={{ background: "none", border: "1px solid " + CL.border, borderRadius: 6, color: CL.dim, fontSize: 10, padding: "7px 10px", cursor: "pointer", fontFamily: FT }}>CSV</button>}
-                      <button onClick={function() { if (confirm("Delete " + c.name + " and all its neighborhoods?")) { deepSet(function(d) { delete d.cities[c.id] }); setOpenCity(null) } }} style={{ background: "none", border: "1px solid #E8606A22", borderRadius: 6, color: "#E8606A88", fontSize: 10, padding: "7px 10px", cursor: "pointer", fontFamily: FT }}>🗑 Delete City</button>
+                      <button onClick={function() { if (confirm("Delete " + c.name + " and all its neighborhoods?")) { deepSet(function(d) { delete d.cities[c.id] }); setOpenCity(null) } }} style={{ background: "none", border: "1px solid #E8606A22", borderRadius: 6, color: "#E8606A88", fontSize: 10, padding: "7px 10px", cursor: "pointer", fontFamily: FT }}>🗑</button>
                     </div>
                   )}
                 </div>}
               </div>
             )
           })}
+          {Object.keys(data.cities).length > 0 && <button onClick={function() { if (confirm("Clear ALL prospect data? This cannot be undone.")) { persist({ cities: {} }) } }} style={{ display: "block", width: "100%", background: "none", border: "1px solid #E8606A22", borderRadius: 8, color: "#E8606A66", fontSize: 10, padding: "10px 14px", cursor: "pointer", fontFamily: FT, marginTop: 30, textAlign: "center" }}>Clear All Data</button>}
         </div>
       </div>
     )
@@ -564,9 +507,9 @@ export default function App() {
   if (view === "list" && nh) {
     var all = Object.values(nh.prospects || {})
     var shown = all.filter(function(p) { return filt === "all" || p.status === filt }).sort(function(a, b) {
-      var w = { poor: 0, weak: 1, decent: 2, strong: 3 }
-      var wa = a.webScore != null ? w[a.webScore] : -1
-      var wb = b.webScore != null ? w[b.webScore] : -1
+      var w = { unknown: -1, poor: 0, weak: 1, decent: 2, strong: 3 }
+      var wa = w[a.webScore] != null ? w[a.webScore] : -1
+      var wb = w[b.webScore] != null ? w[b.webScore] : -1
       var d = wa - wb
       return d !== 0 ? d : (STATUS[a.status] || {}).sort - (STATUS[b.status] || {}).sort
     })
@@ -591,7 +534,7 @@ export default function App() {
         {hdr(nh.name, city ? city.name : "", function() { setNId(null); setView("home"); setErr(""); setWalkSel(new Set()) })}
         <div style={{ padding: "12px 16px 100px" }}>
           <div style={{ display: "flex", gap: 5, marginBottom: 8, flexWrap: "wrap" }}>
-            <button onClick={doScout} style={{ flex: 1, background: CL.warnBg, border: "1px solid " + CL.warn + "33", borderRadius: 7, color: CL.warn, fontSize: 10, padding: "8px 10px", cursor: "pointer", fontFamily: FT, fontWeight: 600 }}>🔍 Scout</button>
+            <button onClick={doScout} style={{ flex: 1, background: CL.warnBg, border: "1px solid " + CL.warn + "33", borderRadius: 7, color: CL.warn, fontSize: 10, padding: "8px 10px", cursor: "pointer", fontFamily: FT, fontWeight: 600 }}>🔍 Find Businesses</button>
             {all.length > 0 && <button onClick={function() { toCSV(all.map(function(p) { return Object.assign({}, p, { _neighborhood: nh.name, _city: city.name }) }), false) }} style={{ background: CL.card, border: "1px solid " + CL.border, borderRadius: 7, color: CL.mut, fontSize: 10, padding: "8px 10px", cursor: "pointer", fontFamily: FT, fontWeight: 600 }}>CSV</button>}
             {mUrl && <a href={mUrl} target="_blank" rel="noopener noreferrer" style={{ flex: 1, background: CL.accBg, border: "1px solid " + CL.acc + "33", borderRadius: 7, color: CL.acc, fontSize: 10, padding: "8px 10px", fontFamily: FT, fontWeight: 600, textDecoration: "none", textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center" }}>🗺 Walk ({walkable.length})</a>}
           </div>
@@ -601,7 +544,7 @@ export default function App() {
             {walkSel.size > 0 && <button onClick={clearSel} style={{ background: "none", border: "1px solid " + CL.border, borderRadius: 5, color: CL.mut, fontSize: 9, padding: "4px 8px", cursor: "pointer", fontFamily: FT }}>Clear ({walkSel.size})</button>}
           </div>
           <div style={{ display: "flex", gap: 5, marginBottom: 10 }}>
-            <button onClick={function() { setForm({ name: "", address: "", type: "", webScore: "weak", contact: "", notes: "", status: "not_visited" }); setEId(null); setView("form") }} style={{ background: CL.card, border: "1px solid " + CL.border, borderRadius: 7, color: CL.text, fontSize: 10, padding: "7px 10px", cursor: "pointer", fontFamily: FT }}>+ Manual</button>
+            <button onClick={function() { setForm({ name: "", address: "", type: "", webScore: "unknown", currentWebsite: "", contact: "", notes: "", status: "not_visited" }); setEId(null); setView("form") }} style={{ background: CL.card, border: "1px solid " + CL.border, borderRadius: 7, color: CL.text, fontSize: 10, padding: "7px 10px", cursor: "pointer", fontFamily: FT }}>+ Manual</button>
             {walkSel.size > 0 && <button onClick={function() { if (confirm("Delete " + walkSel.size + " selected business" + (walkSel.size !== 1 ? "es" : "") + "?")) { deepSet(function(d) { walkSel.forEach(function(pid) { delete d.cities[cId].neighborhoods[nId].prospects[pid] }) }); setWalkSel(new Set()); setExp(null) } }} style={{ background: "#3B1418", border: "1px solid #E8606A33", borderRadius: 7, color: "#E8606A", fontSize: 10, padding: "7px 10px", cursor: "pointer", fontFamily: FT }}>🗑 Delete ({walkSel.size})</button>}
           </div>
           {ErrBox}
@@ -613,12 +556,11 @@ export default function App() {
             })}
           </div>
           {shown.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "40px 20px", color: CL.dim }}><p style={{ fontSize: 11 }}>{all.length === 0 ? "Hit Scout to find prospects" : "No matches"}</p></div>
+            <div style={{ textAlign: "center", padding: "40px 20px", color: CL.dim }}><p style={{ fontSize: 11 }}>{all.length === 0 ? "Hit Find Businesses to get started" : "No matches"}</p></div>
           ) : shown.map(function(p) {
             var sc = STATUS[p.status]
-            var ws = p.webScore ? WS[p.webScore] : null
+            var ws = WS[p.webScore] || WS.unknown
             var op = exp === p.id
-            var isChecking = checkingWeb === p.id
             return (
               <div key={p.id} style={{ background: CL.card, borderLeft: "3px solid " + sc.color, border: "1px solid " + (op ? sc.color + "33" : CL.border), borderLeftWidth: 3, borderLeftColor: sc.color, borderRadius: 7, marginBottom: 5, overflow: "hidden" }}>
                 <div style={{ display: "flex", alignItems: "center" }}>
@@ -629,8 +571,7 @@ export default function App() {
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
                         <span style={{ fontSize: 11, color: CL.wh, fontWeight: 600 }}>{p.name}</span>
-                        {ws && <span style={{ fontSize: 7, color: ws.color, background: ws.bg, padding: "2px 6px", borderRadius: 3, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: FT }}>{ws.label}</span>}
-                        {isChecking && <span style={{ fontSize: 7, color: CL.acc, padding: "2px 6px", borderRadius: 3, background: CL.accBg, fontFamily: FT }}>checking...</span>}
+                        <span style={{ fontSize: 7, color: ws.color, background: ws.bg, padding: "2px 6px", borderRadius: 3, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: FT }}>{ws.label}</span>
                       </div>
                       {p.type && <p style={{ margin: "1px 0 0", fontSize: 9, color: CL.dim }}>{p.type}{p.address ? " · " + p.address : ""}</p>}
                     </div>
@@ -638,11 +579,16 @@ export default function App() {
                   </button>
                 </div>
                 {op && <div style={{ padding: "0 12px 10px", borderTop: "1px solid " + CL.border }}>
-                  {!p.webScore && !isChecking && <button onClick={function() { doCheckWeb(p.id) }} style={{ display: "block", width: "100%", background: CL.accBg, border: "1px solid " + CL.acc + "33", borderRadius: 6, color: CL.acc, fontSize: 10, padding: "8px 12px", cursor: "pointer", fontFamily: FT, fontWeight: 600, marginTop: 8 }}>🔍 Check Web Presence</button>}
-                  {isChecking && <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, padding: "8px 12px", background: CL.accBg, borderRadius: 6, border: "1px solid " + CL.acc + "22" }}><div style={{ width: 14, height: 14, border: "2px solid " + CL.border, borderTopColor: CL.acc, borderRadius: "50%", animation: "pw .7s linear infinite", flexShrink: 0 }} /><span style={{ fontSize: 10, color: CL.acc }}>Checking web presence...</span></div>}
-                  {p.issues && p.issues.length > 0 && <div style={{ marginTop: 8 }}><span style={{ fontSize: 7, color: "#E8606A", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>Issues</span><div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 3 }}>{p.issues.map(function(x, i) { return <span key={i} style={{ fontSize: 9, color: "#E8606A", background: "#3B141866", padding: "2px 6px", borderRadius: 3 }}>{x}</span> })}</div></div>}
-                  {p.talkingPoints && p.talkingPoints.length > 0 && <div style={{ marginTop: 8, background: CL.bg, padding: "8px 10px", borderRadius: 5 }}><span style={{ fontSize: 7, color: CL.acc, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>Talking Points</span>{p.talkingPoints.map(function(t, i) { return <p key={i} style={{ margin: "4px 0 0", fontSize: 10, color: CL.text, lineHeight: 1.4 }}>→ {t}</p> })}</div>}
-                  {p.currentWebsite && <a href={p.currentWebsite} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 6, fontSize: 9, color: CL.acc }}>🔗 {p.currentWebsite}</a>}
+                  <div style={{ marginTop: 8 }}>
+                    <span style={{ fontSize: 7, color: CL.dim, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>Web Presence</span>
+                    <div style={{ display: "flex", gap: 4, marginTop: 3 }}>
+                      {["poor", "weak", "decent", "strong"].map(function(k) { var v = WS[k]; return <button key={k} onClick={function() { doUpdateP(p.id, { webScore: k }) }} style={{ background: p.webScore === k ? v.bg : "transparent", border: "1px solid " + (p.webScore === k ? v.color + "44" : CL.border), borderRadius: 4, color: p.webScore === k ? v.color : CL.dim, fontSize: 9, padding: "3px 7px", cursor: "pointer", fontFamily: FT }}>{v.label}</button> })}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
+                    <a href={"https://www.google.com/search?" + new URLSearchParams({ q: p.name + " " + p.address })} target="_blank" rel="noopener noreferrer" style={{ fontSize: 9, color: CL.acc, textDecoration: "none" }}>🔍 Google it</a>
+                    {p.currentWebsite && <a href={p.currentWebsite} target="_blank" rel="noopener noreferrer" style={{ fontSize: 9, color: CL.acc, textDecoration: "none" }}>🔗 Website</a>}
+                  </div>
                   {p.contact && <div style={{ marginTop: 8 }}><span style={{ fontSize: 7, color: "#60B8F7", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>Contact</span><p style={{ margin: "3px 0 0", fontSize: 10, color: CL.text, lineHeight: 1.4 }}>👤 {p.contact}</p></div>}
                   {p.notes && <div style={{ marginTop: 8 }}><span style={{ fontSize: 7, color: CL.dim, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>Notes</span><p style={{ margin: "3px 0 0", fontSize: 10, color: CL.text, lineHeight: 1.4 }}>{p.notes}</p></div>}
                   {p.visitedAt && <p style={{ margin: "6px 0 0", fontSize: 8, color: CL.dim }}>Visited {new Date(p.visitedAt).toLocaleDateString()}</p>}
@@ -655,7 +601,7 @@ export default function App() {
                     <span style={{ flex: 1 }} />
                     <button onClick={function() { var ws = new Set(walkSel); ws.delete(p.id); setWalkSel(ws); deepSet(function(d) { delete d.cities[cId].neighborhoods[nId].prospects[p.id] }); setExp(null) }} style={{ background: "none", border: "1px solid #E8606A33", borderRadius: 4, color: "#E8606A88", fontSize: 9, padding: "3px 8px", cursor: "pointer", fontFamily: FT }}>⚠ Fake</button>
                     <button onClick={function() { if (confirm("Delete " + p.name + "?")) { var ws = new Set(walkSel); ws.delete(p.id); setWalkSel(ws); deepSet(function(d) { delete d.cities[cId].neighborhoods[nId].prospects[p.id] }); setExp(null) } }} style={{ background: "none", border: "1px solid " + CL.border, borderRadius: 4, color: CL.dim, fontSize: 9, padding: "3px 8px", cursor: "pointer", fontFamily: FT }}>🗑</button>
-                    <button onClick={function() { setEId(p.id); setForm({ name: p.name, address: p.address || "", type: p.type || "", webScore: p.webScore || "weak", contact: p.contact || "", notes: p.notes || "", status: p.status }); setView("form") }} style={{ background: "none", border: "1px solid " + CL.border, borderRadius: 4, color: CL.mut, fontSize: 9, padding: "3px 8px", cursor: "pointer", fontFamily: FT }}>Edit</button>
+                    <button onClick={function() { setEId(p.id); setForm({ name: p.name, address: p.address || "", type: p.type || "", webScore: p.webScore || "unknown", currentWebsite: p.currentWebsite || "", contact: p.contact || "", notes: p.notes || "", status: p.status }); setView("form") }} style={{ background: "none", border: "1px solid " + CL.border, borderRadius: 4, color: CL.mut, fontSize: 9, padding: "3px 8px", cursor: "pointer", fontFamily: FT }}>Edit</button>
                   </div>
                 </div>}
               </div>
@@ -673,17 +619,10 @@ export default function App() {
       <div style={{ background: CL.bg, minHeight: "100vh", fontFamily: FT, color: CL.text, maxWidth: 500, margin: "0 auto" }}>
         {hdr(isEd ? "EDIT" : "ADD PROSPECT", nh ? nh.name : "", function() { setView("list"); setEId(null) })}
         <div style={{ padding: "16px 16px 100px" }}>
-          <div style={{ marginBottom: 12 }}>
-            <span style={{ fontSize: 8, color: CL.dim, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700 }}>Business Name</span>
-            <div style={{ display: "flex", gap: 6, marginTop: 3 }}>
-              <input value={form.name || ""} onChange={function(e) { setForm(Object.assign({}, form, { name: e.target.value })) }} placeholder="e.g. Capitol Hill Coffee" style={{ flex: 1, background: CL.card, border: "1px solid " + CL.border, borderRadius: 6, color: CL.wh, fontSize: 12, padding: "9px 11px", fontFamily: FT, boxSizing: "border-box", outline: "none" }} />
-              {!isEd && <button onClick={doLookup} disabled={lookingUp || !form.name || !form.name.trim()} style={{ background: lookingUp ? CL.card : CL.accBg, border: "1px solid " + CL.acc + "33", borderRadius: 6, color: lookingUp ? CL.dim : CL.acc, fontSize: 10, padding: "9px 12px", cursor: lookingUp || !form.name || !form.name.trim() ? "default" : "pointer", fontFamily: FT, fontWeight: 600, whiteSpace: "nowrap", opacity: !form.name || !form.name.trim() ? 0.4 : 1 }}>{lookingUp ? "..." : "Lookup"}</button>}
-            </div>
-          </div>
-          {ErrBox}
-          {[["address", "Address", "123 Pike St"], ["type", "Type", "coffee shop, salon..."]].map(function(a) {
+          {[["name", "Business Name", "e.g. Capitol Hill Coffee"], ["address", "Address", "123 Pike St"], ["type", "Type", "coffee shop, salon..."], ["currentWebsite", "Website", "https://..."]].map(function(a) {
             return <div key={a[0]} style={{ marginBottom: 12 }}><span style={{ fontSize: 8, color: CL.dim, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700 }}>{a[1]}</span><input value={form[a[0]] || ""} onChange={function(e) { var u = {}; u[a[0]] = e.target.value; setForm(Object.assign({}, form, u)) }} placeholder={a[2]} style={{ display: "block", width: "100%", background: CL.card, border: "1px solid " + CL.border, borderRadius: 6, color: CL.wh, fontSize: 12, padding: "9px 11px", marginTop: 3, fontFamily: FT, boxSizing: "border-box", outline: "none" }} /></div>
           })}
+          {ErrBox}
           <div style={{ marginBottom: 12 }}><span style={{ fontSize: 8, color: CL.dim, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700 }}>Web Presence</span><div style={{ display: "flex", gap: 5, marginTop: 4 }}>{Object.keys(WS).map(function(k) { var v = WS[k]; return <button key={k} onClick={function() { setForm(Object.assign({}, form, { webScore: k })) }} style={{ background: form.webScore === k ? v.bg : CL.card, border: "1px solid " + (form.webScore === k ? v.color + "55" : CL.border), borderRadius: 5, color: form.webScore === k ? v.color : CL.mut, fontSize: 10, padding: "5px 9px", cursor: "pointer", fontFamily: FT }}>{v.label}</button> })}</div></div>
           <div style={{ marginBottom: 12 }}><span style={{ fontSize: 8, color: CL.dim, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700 }}>Contact Person</span><input value={form.contact || ""} onChange={function(e) { setForm(Object.assign({}, form, { contact: e.target.value })) }} placeholder="Name, role, phone..." style={{ display: "block", width: "100%", background: CL.card, border: "1px solid " + CL.border, borderRadius: 6, color: CL.wh, fontSize: 12, padding: "9px 11px", marginTop: 3, fontFamily: FT, boxSizing: "border-box", outline: "none" }} /></div>
           <div style={{ marginBottom: 12 }}><span style={{ fontSize: 8, color: CL.dim, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700 }}>Notes</span><textarea value={form.notes || ""} onChange={function(e) { setForm(Object.assign({}, form, { notes: e.target.value })) }} placeholder="Who you talked to, follow-up..." rows={3} style={{ display: "block", width: "100%", background: CL.card, border: "1px solid " + CL.border, borderRadius: 6, color: CL.wh, fontSize: 11, padding: "9px 11px", marginTop: 3, fontFamily: FT, boxSizing: "border-box", resize: "vertical", outline: "none" }} /></div>
@@ -691,7 +630,7 @@ export default function App() {
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={function() {
               if (!form.name || !form.name.trim()) return
-              var f = { name: form.name.trim(), address: (form.address || "").trim(), type: (form.type || "").trim(), webScore: form.webScore || "weak", contact: (form.contact || "").trim(), notes: (form.notes || "").trim(), status: form.status || "not_visited", issues: form.issues || [], talkingPoints: form.talkingPoints || [], currentWebsite: cleanUrl(form.currentWebsite) }
+              var f = { name: form.name.trim(), address: (form.address || "").trim(), type: (form.type || "").trim(), webScore: form.webScore || "unknown", contact: (form.contact || "").trim(), notes: (form.notes || "").trim(), status: form.status || "not_visited", currentWebsite: cleanUrl(form.currentWebsite) }
               if (isEd) { doUpdateP(eId, f); setEId(null); setView("list") } else doAddP(f)
             }} style={{ flex: 1, background: CL.acc, border: "none", borderRadius: 7, color: "#fff", fontSize: 12, padding: "10px 0", cursor: "pointer", fontFamily: FT, fontWeight: 600 }}>Save</button>
             {isEd && <button onClick={function() { if (confirm("Delete?")) { doDelP(eId); setEId(null) } }} style={{ background: "#3B1418", border: "none", borderRadius: 7, color: "#E8606A", fontSize: 11, padding: "10px 14px", cursor: "pointer", fontFamily: FT }}>Delete</button>}

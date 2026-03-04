@@ -7,7 +7,7 @@ export const supabase = createClient(supabaseUrl, supabaseKey)
 
 // Single-row JSON storage for simplicity
 // Table: prospect_data (id text primary key, data jsonb, updated_at timestamptz)
-const ROW_ID = 'main'
+const ROW_ID = 'pw-v6'
 
 export async function loadData() {
   const { data, error } = await supabase
