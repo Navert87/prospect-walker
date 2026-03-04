@@ -27,18 +27,32 @@ export default async function handler(req, res) {
 
     if (!r.ok) {
       const err = await r.text()
+      console.error('[scout] API error:', r.status, err)
       return res.status(r.status).json({ error: 'API ' + r.status, detail: err })
     }
 
     const data = await r.json()
-    // Extract text from content blocks (Anthropic returns an array of content blocks)
+
+    // Log response shape for debugging
+    const blockTypes = (data.content || []).map(b => b.type)
+    console.log('[scout] stop_reason:', data.stop_reason, 'blocks:', blockTypes.join(', '))
+
+    // Extract all text from content blocks
+    // Web search responses have: web_search_tool_result, text, etc.
     const text = (data.content || [])
       .filter(b => b.type === 'text')
       .map(b => b.text)
       .join('\n')
 
+    if (!text) {
+      console.error('[scout] No text blocks found. Full content:', JSON.stringify(data.content).slice(0, 500))
+      return res.status(500).json({ error: 'No text in response', detail: 'Block types: ' + blockTypes.join(', ') })
+    }
+
+    console.log('[scout] Returning text length:', text.length, 'preview:', text.slice(0, 200))
     return res.status(200).json({ text })
   } catch (e) {
+    console.error('[scout] Exception:', e.message)
     return res.status(500).json({ error: e.message })
   }
 }
