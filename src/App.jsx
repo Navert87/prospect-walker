@@ -59,7 +59,7 @@ async function scoutBiz(nh, city) {
 }
 
 async function identifyLocation(lat, lng) {
-  var raw = await callScout("What neighborhood and city are these GPS coordinates in: [" + lat + ", " + lng + "]? Return ONLY a JSON object, no other text: {\"neighborhood\":\"Neighborhood Name\",\"city\":\"City Name\"}")
+  var raw = await callScout("What is the most specific, commonly-used neighborhood name for GPS coordinates [" + lat + ", " + lng + "]? Use the local name residents and businesses would use (e.g. 'Capitol Hill' not 'Central Seattle', 'Fremont' not 'North Seattle'). Return ONLY a JSON object, no other text: {\"neighborhood\":\"Specific Neighborhood Name\",\"city\":\"City Name\"}")
   var p = grabJSON(raw)
   if (!p || !p.neighborhood || !p.city) throw new Error("Could not identify location")
   if (Array.isArray(p)) return p[0]
@@ -115,6 +115,7 @@ export default function App() {
   var [lookingUp, setLookingUp] = useState(false)
   var [addNhCity, setAddNhCity] = useState(null)
   var [addNhInput, setAddNhInput] = useState("")
+  var [userCoords, setUserCoords] = useState(null)
 
   useEffect(function() {
     loadData().then(function(d) {
@@ -122,6 +123,15 @@ export default function App() {
       setLoading(false)
     }).catch(function() { setLoading(false) })
   }, [])
+
+  useEffect(function() {
+    if (!authed || !navigator.geolocation) return
+    navigator.geolocation.getCurrentPosition(
+      function(pos) { setUserCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }) },
+      function() {},
+      { enableHighAccuracy: true, timeout: 5000 }
+    )
+  }, [authed])
 
   var persist = useCallback(async function(nd) {
     setData(nd)
@@ -330,20 +340,6 @@ export default function App() {
     )
   }
 
-  var doWalk = function(list, existingCoords) {
-    var openUrl = function(coords) {
-      var url = makeWalkUrl(list, coords)
-      if (url) window.open(url, "_blank")
-    }
-    if (existingCoords) { openUrl(existingCoords); return }
-    if (!navigator.geolocation) { openUrl(null); return }
-    navigator.geolocation.getCurrentPosition(
-      function(pos) { openUrl({ lat: pos.coords.latitude, lng: pos.coords.longitude }) },
-      function() { openUrl(null) },
-      { enableHighAccuracy: true, timeout: 5000 }
-    )
-  }
-
   if (!authed) return (
     <div style={{ background: CL.bg, minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: FT, padding: 40 }}>
       <div style={{ width: "100%", maxWidth: 300 }}>
@@ -507,6 +503,7 @@ export default function App() {
       return d !== 0 ? d : (STATUS[a.status] || {}).sort - (STATUS[b.status] || {}).sort
     })
     var walkable = shown.filter(function(p) { return walkSel.has(p.id) })
+    var mUrl = walkable.length >= 1 ? makeWalkUrl(walkable, userCoords) : null
 
     var toggleWalk = function(pid) {
       var s = new Set(walkSel)
@@ -526,7 +523,7 @@ export default function App() {
         <div style={{ padding: "12px 16px 100px" }}>
           <div style={{ display: "flex", gap: 5, marginBottom: 8, flexWrap: "wrap" }}>
             <button onClick={doScout} style={{ flex: 1, background: CL.warnBg, border: "1px solid " + CL.warn + "33", borderRadius: 7, color: CL.warn, fontSize: 10, padding: "8px 10px", cursor: "pointer", fontFamily: FT, fontWeight: 600 }}>🔍 Scout</button>
-            {walkable.length >= 1 && <button onClick={function() { doWalk(walkable) }} style={{ flex: 1, background: CL.accBg, border: "1px solid " + CL.acc + "33", borderRadius: 7, color: CL.acc, fontSize: 10, padding: "8px 10px", fontFamily: FT, fontWeight: 600, textAlign: "center", cursor: "pointer" }}>🗺 Walk ({walkable.length})</button>}
+            {mUrl && <a href={mUrl} target="_blank" rel="noopener noreferrer" style={{ flex: 1, background: CL.accBg, border: "1px solid " + CL.acc + "33", borderRadius: 7, color: CL.acc, fontSize: 10, padding: "8px 10px", fontFamily: FT, fontWeight: 600, textDecoration: "none", textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center" }}>🗺 Walk ({walkable.length})</a>}
           </div>
           {lastScoutCount !== null && <div style={{ background: CL.accBg, border: "1px solid " + CL.acc + "22", borderRadius: 5, padding: "5px 10px", marginBottom: 8 }}><p style={{ margin: 0, fontSize: 10, color: CL.acc }}>Found {lastScoutCount} new business{lastScoutCount !== 1 ? "es" : ""}</p></div>}
           <div style={{ display: "flex", gap: 5, marginBottom: 8 }}>
