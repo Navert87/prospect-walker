@@ -250,6 +250,7 @@ export default function App() {
           }
         })
       })
+      setWalkSel(new Set())
       setLastScoutCount(addedCount)
       setTimeout(function() { setLastScoutCount(null) }, 5000)
     } catch(e) { setErr("Scout failed: " + e.message) }
@@ -547,7 +548,8 @@ export default function App() {
       var d = (w[a.webScore] || 1) - (w[b.webScore] || 1)
       return d !== 0 ? d : (STATUS[a.status] || {}).sort - (STATUS[b.status] || {}).sort
     })
-    var walkable = shown.filter(function(p) { return walkSel.has(p.id) })
+    var prospectIds = new Set(all.map(function(p) { return p.id }))
+    var walkable = shown.filter(function(p) { return walkSel.has(p.id) && prospectIds.has(p.id) })
     var mUrl = walkable.length >= 1 ? makeWalkUrl(walkable, userCoords) : null
 
     var toggleWalk = function(pid) {
@@ -556,7 +558,7 @@ export default function App() {
       setWalkSel(s)
     }
     var selAllShown = function() {
-      var s = new Set(walkSel)
+      var s = new Set()
       shown.forEach(function(p) { if (p.address) s.add(p.id) })
       setWalkSel(s)
     }
@@ -625,8 +627,8 @@ export default function App() {
                   <div style={{ display: "flex", gap: 4, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
                     {Object.keys(STATUS).map(function(k) { var v = STATUS[k]; return <button key={k} onClick={function() { doUpdateP(p.id, { status: k }) }} style={{ background: p.status === k ? v.bg : "transparent", border: "1px solid " + (p.status === k ? v.color + "44" : CL.border), borderRadius: 4, color: p.status === k ? v.color : CL.dim, fontSize: 9, padding: "3px 7px", cursor: "pointer", fontFamily: FT }}>{v.icon}</button> })}
                     <span style={{ flex: 1 }} />
-                    <button onClick={function() { deepSet(function(d) { delete d.cities[cId].neighborhoods[nId].prospects[p.id] }); setExp(null) }} style={{ background: "none", border: "1px solid #E8606A33", borderRadius: 4, color: "#E8606A88", fontSize: 9, padding: "3px 8px", cursor: "pointer", fontFamily: FT }}>⚠ Fake</button>
-                    <button onClick={function() { if (confirm("Delete " + p.name + "?")) { deepSet(function(d) { delete d.cities[cId].neighborhoods[nId].prospects[p.id] }); setExp(null) } }} style={{ background: "none", border: "1px solid " + CL.border, borderRadius: 4, color: CL.dim, fontSize: 9, padding: "3px 8px", cursor: "pointer", fontFamily: FT }}>🗑</button>
+                    <button onClick={function() { var ws = new Set(walkSel); ws.delete(p.id); setWalkSel(ws); deepSet(function(d) { delete d.cities[cId].neighborhoods[nId].prospects[p.id] }); setExp(null) }} style={{ background: "none", border: "1px solid #E8606A33", borderRadius: 4, color: "#E8606A88", fontSize: 9, padding: "3px 8px", cursor: "pointer", fontFamily: FT }}>⚠ Fake</button>
+                    <button onClick={function() { if (confirm("Delete " + p.name + "?")) { var ws = new Set(walkSel); ws.delete(p.id); setWalkSel(ws); deepSet(function(d) { delete d.cities[cId].neighborhoods[nId].prospects[p.id] }); setExp(null) } }} style={{ background: "none", border: "1px solid " + CL.border, borderRadius: 4, color: CL.dim, fontSize: 9, padding: "3px 8px", cursor: "pointer", fontFamily: FT }}>🗑</button>
                     <button onClick={function() { setEId(p.id); setForm({ name: p.name, address: p.address || "", type: p.type || "", webScore: p.webScore || "weak", contact: p.contact || "", notes: p.notes || "", status: p.status }); setView("form") }} style={{ background: "none", border: "1px solid " + CL.border, borderRadius: 4, color: CL.mut, fontSize: 9, padding: "3px 8px", cursor: "pointer", fontFamily: FT }}>Edit</button>
                   </div>
                 </div>}
