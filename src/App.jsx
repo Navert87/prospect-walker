@@ -58,10 +58,11 @@ async function scoutBiz(nh, city) {
   return p
 }
 
-async function scoutNearby(lat, lng) {
-  var raw = await callScout("Find 10-15 small businesses within half a mile of GPS coordinates [" + lat + ", " + lng + "]. ONLY real, verifiable businesses — do NOT fabricate or guess. I run Hypandra Consulting offering web development, AI integration, and digital consulting. Find businesses (NOT chains) with weak web/digital presence. CRITICAL: ONLY return businesses you can verify actually exist at a real street address. If you cannot verify a business, exclude it. Better to return fewer verified results than many unverified ones. ONLY return a JSON array, no other text: [{\"name\":\"Name\",\"address\":\"street\",\"type\":\"category\",\"webScore\":\"poor|weak|decent|strong\",\"issues\":[\"no website\"],\"talkingPoints\":[\"pitch idea\"],\"currentWebsite\":\"url or null\"}] Sort weakest first.")
+async function identifyLocation(lat, lng) {
+  var raw = await callScout("What neighborhood and city are these GPS coordinates in: [" + lat + ", " + lng + "]? Return ONLY a JSON object, no other text: {\"neighborhood\":\"Neighborhood Name\",\"city\":\"City Name\"}")
   var p = grabJSON(raw)
-  if (!p || !Array.isArray(p)) throw new Error("Parse failed - try again")
+  if (!p || !p.neighborhood || !p.city) throw new Error("Could not identify location")
+  if (Array.isArray(p)) return p[0]
   return p
 }
 
@@ -112,13 +113,6 @@ export default function App() {
   var [walkSel, setWalkSel] = useState(new Set())
   var [lastScoutCount, setLastScoutCount] = useState(null)
   var [lookingUp, setLookingUp] = useState(false)
-  var [nearbyResults, setNearbyResults] = useState([])
-  var [nearbySel, setNearbySel] = useState(new Set())
-  var [nearbyCoords, setNearbyCoords] = useState(null)
-  var [nearbyPick, setNearbyPick] = useState(false)
-  var [saveTarget, setSaveTarget] = useState(null)
-  var [newCityName, setNewCityName] = useState("")
-  var [newNhName, setNewNhName] = useState("")
   var [addNhCity, setAddNhCity] = useState(null)
   var [addNhInput, setAddNhInput] = useState("")
 
@@ -280,15 +274,51 @@ export default function App() {
       async function(pos) {
         var lat = pos.coords.latitude
         var lng = pos.coords.longitude
-        setNearbyCoords({ lat: lat, lng: lng })
-        setBusy("Scouting nearby businesses...")
         try {
-          var biz = await scoutNearby(lat, lng)
-          setNearbyResults(biz)
-          setNearbySel(new Set())
-          setNearbyPick(false)
-          setSaveTarget(null)
-          setView("nearby")
+          setBusy("Identifying neighborhood...")
+          var loc = await identifyLocation(lat, lng)
+          setBusy("Scouting " + loc.neighborhood + "...")
+          var biz = await scoutBiz(loc.neighborhood, loc.city)
+          var targetCityId = null, targetNhId = null
+          Object.keys(data.cities).forEach(function(id) {
+            if (data.cities[id].name.toLowerCase() === loc.city.toLowerCase()) targetCityId = id
+          })
+          if (targetCityId && data.cities[targetCityId]) {
+            var nhs = data.cities[targetCityId].neighborhoods || {}
+            Object.keys(nhs).forEach(function(id) {
+              if (nhs[id].name.toLowerCase() === loc.neighborhood.toLowerCase()) targetNhId = id
+            })
+          }
+          if (!targetCityId) targetCityId = uid()
+          if (!targetNhId) targetNhId = uid()
+          var addedCount = 0
+          deepSet(function(d) {
+            if (!d.cities[targetCityId]) d.cities[targetCityId] = { id: targetCityId, name: loc.city, neighborhoods: {} }
+            if (!d.cities[targetCityId].neighborhoods[targetNhId]) d.cities[targetCityId].neighborhoods[targetNhId] = { id: targetNhId, name: loc.neighborhood, description: "", prospects: {} }
+            var pros = d.cities[targetCityId].neighborhoods[targetNhId].prospects
+            var existing = Object.values(pros).map(function(p) { return p.name.toLowerCase().trim() })
+            biz.forEach(function(b) {
+              var bName = (b.name || "").toLowerCase().trim()
+              if (!bName || existing.indexOf(bName) !== -1) return
+              existing.push(bName)
+              addedCount++
+              var pid = uid()
+              pros[pid] = {
+                id: pid, name: b.name || "Unknown", address: b.address || "", type: b.type || "",
+                webScore: b.webScore || "weak", issues: b.issues || [], talkingPoints: b.talkingPoints || [],
+                currentWebsite: b.currentWebsite || null, status: "not_visited", notes: "",
+                contact: "", visitedAt: null,
+              }
+            })
+          })
+          setCId(targetCityId)
+          setNId(targetNhId)
+          setLastScoutCount(addedCount)
+          setTimeout(function() { setLastScoutCount(null) }, 5000)
+          setFilt("all")
+          setExp(null)
+          setWalkSel(new Set())
+          setView("list")
         } catch(e) { setErr("Nearby scout failed: " + e.message) }
         setBusy("")
       },
@@ -298,46 +328,6 @@ export default function App() {
       },
       { enableHighAccuracy: true, timeout: 10000 }
     )
-  }
-
-  var doSaveNearby = function() {
-    var checked = nearbyResults.filter(function(_, i) { return nearbySel.has(i) })
-    if (checked.length === 0) return
-    deepSet(function(d) {
-      var targetCityId, targetNhId
-      if (saveTarget) {
-        targetCityId = saveTarget.cityId
-        targetNhId = saveTarget.nhId
-      } else if (newCityName.trim() && newNhName.trim()) {
-        var existingCity = Object.values(d.cities).find(function(c) { return c.name.toLowerCase() === newCityName.trim().toLowerCase() })
-        if (existingCity) {
-          targetCityId = existingCity.id
-        } else {
-          targetCityId = uid()
-          d.cities[targetCityId] = { id: targetCityId, name: newCityName.trim(), neighborhoods: {} }
-        }
-        targetNhId = uid()
-        d.cities[targetCityId].neighborhoods[targetNhId] = { id: targetNhId, name: newNhName.trim(), description: "", prospects: {} }
-      } else return
-      var pros = d.cities[targetCityId].neighborhoods[targetNhId].prospects
-      var existing = Object.values(pros).map(function(p) { return p.name.toLowerCase().trim() })
-      checked.forEach(function(b) {
-        var bName = (b.name || "").toLowerCase().trim()
-        if (!bName || existing.indexOf(bName) !== -1) return
-        existing.push(bName)
-        var pid = uid()
-        pros[pid] = {
-          id: pid, name: b.name || "Unknown", address: b.address || "", type: b.type || "",
-          webScore: b.webScore || "weak", issues: b.issues || [], talkingPoints: b.talkingPoints || [],
-          currentWebsite: b.currentWebsite || null, status: "not_visited", notes: "",
-          contact: "", visitedAt: null,
-        }
-      })
-    })
-    setNearbyPick(false)
-    setSaveTarget(null)
-    setNewCityName("")
-    setNewNhName("")
   }
 
   var doWalk = function(list, existingCoords) {
@@ -503,75 +493,6 @@ export default function App() {
             </button>
           })}
           {sel.size > 0 && <button onClick={doConfirmNHs} style={{ display: "block", width: "100%", background: CL.acc, border: "none", borderRadius: 8, color: "#fff", fontSize: 12, padding: "11px 0", cursor: "pointer", fontFamily: FT, fontWeight: 600, marginTop: 12, position: "sticky", bottom: 12 }}>Add {sel.size} Neighborhood{sel.size !== 1 ? "s" : ""}</button>}
-        </div>
-      </div>
-    )
-  }
-
-  // ===== NEARBY =====
-  if (view === "nearby") {
-    var nChecked = nearbyResults.filter(function(_, i) { return nearbySel.has(i) })
-    var allCities = Object.values(data.cities)
-
-    if (nearbyPick) {
-      var hasTarget = saveTarget || (newCityName.trim() && newNhName.trim())
-      return (
-        <div style={{ background: CL.bg, minHeight: "100vh", fontFamily: FT, color: CL.text, maxWidth: 500, margin: "0 auto" }}>
-          {hdr("SAVE TO", nChecked.length + " selected", function() { setNearbyPick(false) })}
-          <div style={{ padding: "12px 16px 100px" }}>
-            {allCities.map(function(c) {
-              var nhs = Object.values(c.neighborhoods || {})
-              return nhs.map(function(n) {
-                var isSel = saveTarget && saveTarget.cityId === c.id && saveTarget.nhId === n.id
-                return <button key={n.id} onClick={function() { setSaveTarget({ cityId: c.id, nhId: n.id }); setNewCityName(""); setNewNhName("") }} style={{ display: "block", width: "100%", textAlign: "left", background: isSel ? CL.accBg : CL.card, border: "1px solid " + (isSel ? CL.acc + "44" : CL.border), borderRadius: 7, padding: "10px 12px", marginBottom: 4, cursor: "pointer", fontFamily: FT }}>
-                  <span style={{ fontSize: 11, color: CL.wh, fontWeight: 500 }}>{n.name}</span>
-                  <span style={{ fontSize: 9, color: CL.dim, marginLeft: 6 }}>{c.name}</span>
-                </button>
-              })
-            })}
-            <div style={{ marginTop: 16, padding: "12px", background: CL.card, border: "1px solid " + CL.border, borderRadius: 8 }}>
-              <span style={{ fontSize: 8, color: CL.dim, textTransform: "uppercase", letterSpacing: "0.1em", fontWeight: 700 }}>Create New Neighborhood</span>
-              <input value={newCityName} onChange={function(e) { setNewCityName(e.target.value); setSaveTarget(null) }} placeholder="City name..." style={{ display: "block", width: "100%", background: CL.bg, border: "1px solid " + CL.border, borderRadius: 6, color: CL.wh, fontSize: 12, padding: "8px 10px", marginTop: 8, fontFamily: FT, boxSizing: "border-box", outline: "none" }} />
-              <input value={newNhName} onChange={function(e) { setNewNhName(e.target.value); setSaveTarget(null) }} placeholder="Neighborhood name..." style={{ display: "block", width: "100%", background: CL.bg, border: "1px solid " + CL.border, borderRadius: 6, color: CL.wh, fontSize: 12, padding: "8px 10px", marginTop: 6, fontFamily: FT, boxSizing: "border-box", outline: "none" }} />
-            </div>
-            {hasTarget && <button onClick={doSaveNearby} style={{ display: "block", width: "100%", background: CL.acc, border: "none", borderRadius: 8, color: "#fff", fontSize: 12, padding: "11px 0", cursor: "pointer", fontFamily: FT, fontWeight: 600, marginTop: 16, position: "sticky", bottom: 12 }}>Save {nChecked.length} Business{nChecked.length !== 1 ? "es" : ""}</button>}
-          </div>
-        </div>
-      )
-    }
-
-    return (
-      <div style={{ background: CL.bg, minHeight: "100vh", fontFamily: FT, color: CL.text, maxWidth: 500, margin: "0 auto" }}>
-        {hdr("NEARBY", nearbyCoords ? nearbyCoords.lat.toFixed(4) + ", " + nearbyCoords.lng.toFixed(4) : "", function() { setView("home"); setNearbyResults([]); setNearbySel(new Set()); setNearbyCoords(null) })}
-        <div style={{ padding: "12px 16px 100px" }}>
-          <div style={{ display: "flex", gap: 5, marginBottom: 8 }}>
-            {nChecked.length >= 1 && <button onClick={function() { doWalk(nChecked, nearbyCoords) }} style={{ flex: 1, background: CL.accBg, border: "1px solid " + CL.acc + "33", borderRadius: 7, color: CL.acc, fontSize: 10, padding: "8px 10px", fontFamily: FT, fontWeight: 600, textAlign: "center", cursor: "pointer" }}>🗺 Walk ({nChecked.length})</button>}
-            {nChecked.length > 0 && <button onClick={function() { setNearbyPick(true) }} style={{ flex: 1, background: CL.warnBg, border: "1px solid " + CL.warn + "33", borderRadius: 7, color: CL.warn, fontSize: 10, padding: "8px 10px", cursor: "pointer", fontFamily: FT, fontWeight: 600 }}>Save to...</button>}
-          </div>
-          <div style={{ display: "flex", gap: 5, marginBottom: 10 }}>
-            <button onClick={function() { setNearbySel(new Set(nearbyResults.map(function(_, i) { return i }))) }} style={{ background: "none", border: "1px solid " + CL.border, borderRadius: 5, color: CL.mut, fontSize: 9, padding: "4px 8px", cursor: "pointer", fontFamily: FT }}>☑ All</button>
-            <button onClick={function() { setNearbySel(new Set()) }} style={{ background: "none", border: "1px solid " + CL.border, borderRadius: 5, color: CL.mut, fontSize: 9, padding: "4px 8px", cursor: "pointer", fontFamily: FT }}>None</button>
-            <span style={{ flex: 1 }} />
-            <span style={{ fontSize: 10, color: CL.acc }}>{nearbySel.size} selected</span>
-          </div>
-          {nearbyResults.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "40px 20px", color: CL.dim }}><p style={{ fontSize: 11 }}>No businesses found nearby</p></div>
-          ) : nearbyResults.map(function(b, i) {
-            var checked = nearbySel.has(i)
-            var ws = WS[b.webScore] || WS.weak
-            return (
-              <button key={i} onClick={function() { var s = new Set(nearbySel); if (checked) s.delete(i); else s.add(i); setNearbySel(s) }} style={{ display: "flex", width: "100%", textAlign: "left", alignItems: "center", gap: 10, background: checked ? CL.accBg : CL.card, border: "1px solid " + (checked ? CL.acc + "44" : CL.border), borderRadius: 7, padding: "10px 12px", marginBottom: 4, cursor: "pointer", fontFamily: FT }}>
-                <span style={{ width: 18, height: 18, borderRadius: 4, display: "flex", alignItems: "center", justifyContent: "center", background: checked ? CL.acc : "transparent", border: "1.5px solid " + (checked ? CL.acc : CL.bL), color: "#fff", fontSize: 11, fontWeight: 700, flexShrink: 0 }}>{checked ? "✓" : ""}</span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 11, color: CL.wh, fontWeight: 600 }}>{b.name}</span>
-                    <span style={{ fontSize: 7, color: ws.color, background: ws.bg, padding: "2px 6px", borderRadius: 3, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: FT }}>{ws.label}</span>
-                  </div>
-                  {b.type && <p style={{ margin: "1px 0 0", fontSize: 9, color: CL.dim }}>{b.type}{b.address ? " · " + b.address : ""}</p>}
-                </div>
-              </button>
-            )
-          })}
         </div>
       </div>
     )
