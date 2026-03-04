@@ -214,9 +214,14 @@ export default function App() {
 
   var doScout = async function() {
     if (!nh || !city) return
-    setBusy("Finding businesses in " + nh.name + "..."); setErr("")
+    setBusy("Locating " + nh.name + "..."); setErr("")
     try {
-      var biz = await findBiz(nh.name, city.name)
+      var geoRaw = await callScout("What are the approximate center coordinates (latitude, longitude) of " + nh.name + ", " + city.name + "? Return ONLY JSON: {\"lat\":number,\"lng\":number}")
+      var coords = grabJSON(geoRaw)
+      if (!coords || typeof coords.lat !== "number" || typeof coords.lng !== "number") throw new Error("Could not locate " + nh.name)
+      if (Array.isArray(coords)) coords = coords[0]
+      setBusy("Finding businesses in " + nh.name + "...")
+      var biz = await findBiz(nh.name, city.name, coords)
       var addedCount = 0
       deepSet(function(d) {
         var pros = d.cities[cId].neighborhoods[nId].prospects
