@@ -82,7 +82,7 @@ function makeWalkUrl(list, originCoords) {
   var dest = a[a.length - 1]
   var waypoints = originCoords ? a.slice(0, -1) : a.slice(1, -1)
   var u = "https://www.google.com/maps/dir/?api=1&origin=" + origin + "&destination=" + dest + "&travelmode=walking"
-  if (waypoints.length > 0) u += "&waypoints=optimize:true|" + waypoints.join("|")
+  if (waypoints.length > 0) u += "&waypoints=" + waypoints.join("|")
   return u
 }
 
