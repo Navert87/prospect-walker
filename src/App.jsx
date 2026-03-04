@@ -87,6 +87,37 @@ function makeWalkUrl(list, originCoords) {
   return u
 }
 
+function csvEsc(v) {
+  if (v == null) return ""
+  var s = String(v)
+  if (s.indexOf(",") !== -1 || s.indexOf('"') !== -1 || s.indexOf("\n") !== -1) return '"' + s.replace(/"/g, '""') + '"'
+  return s
+}
+
+function toCSV(prospects, includeLocation) {
+  var cols = ["Name", "Address", "Type", "Web Score", "Status", "Emailed", "Contact", "Notes", "Issues", "Talking Points", "Website", "Visited At"]
+  if (includeLocation) cols.push("Neighborhood", "City")
+  var rows = [cols.join(",")]
+  prospects.forEach(function(p) {
+    var row = [
+      csvEsc(p.name), csvEsc(p.address), csvEsc(p.type), csvEsc(p.webScore),
+      csvEsc((STATUS[p.status] || {}).label || p.status), csvEsc(p.emailed ? "Yes" : "No"),
+      csvEsc(p.contact), csvEsc(p.notes),
+      csvEsc((p.issues || []).join("; ")), csvEsc((p.talkingPoints || []).join("; ")),
+      csvEsc(p.currentWebsite), csvEsc(p.visitedAt ? new Date(p.visitedAt).toLocaleDateString() : ""),
+    ]
+    if (includeLocation) { row.push(csvEsc(p._neighborhood)); row.push(csvEsc(p._city)) }
+    rows.push(row.join(","))
+  })
+  var blob = new Blob([rows.join("\n")], { type: "text/csv" })
+  var url = URL.createObjectURL(blob)
+  var a = document.createElement("a")
+  a.href = url
+  a.download = (prospects[0] && prospects[0]._city ? prospects[0]._city : "prospects") + ".csv"
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 export default function App() {
   var [authed, setAuthed] = useState(function() {
     if (!APP_PW) return true
@@ -458,6 +489,7 @@ export default function App() {
                   ) : (
                     <div style={{ display: "flex", gap: 5, marginTop: 4 }}>
                       <button onClick={function() { setAddNhCity(c.id); setAddNhInput("") }} style={{ flex: 1, background: "none", border: "1px dashed " + CL.border, borderRadius: 6, color: CL.dim, fontSize: 10, padding: "7px 12px", cursor: "pointer", fontFamily: FT, textAlign: "center" }}>+ Neighborhood</button>
+                      {tp > 0 && <button onClick={function() { var all = []; nhs.forEach(function(n) { Object.values(n.prospects || {}).forEach(function(p) { all.push(Object.assign({}, p, { _neighborhood: n.name, _city: c.name })) }) }); toCSV(all, true) }} style={{ background: "none", border: "1px solid " + CL.border, borderRadius: 6, color: CL.dim, fontSize: 10, padding: "7px 10px", cursor: "pointer", fontFamily: FT }}>CSV</button>}
                       <button onClick={function() { if (confirm("Delete " + c.name + " and all its neighborhoods?")) { deepSet(function(d) { delete d.cities[c.id] }); setOpenCity(null) } }} style={{ background: "none", border: "1px solid #E8606A22", borderRadius: 6, color: "#E8606A88", fontSize: 10, padding: "7px 10px", cursor: "pointer", fontFamily: FT }}>🗑 Delete City</button>
                     </div>
                   )}
@@ -524,6 +556,7 @@ export default function App() {
         <div style={{ padding: "12px 16px 100px" }}>
           <div style={{ display: "flex", gap: 5, marginBottom: 8, flexWrap: "wrap" }}>
             <button onClick={doScout} style={{ flex: 1, background: CL.warnBg, border: "1px solid " + CL.warn + "33", borderRadius: 7, color: CL.warn, fontSize: 10, padding: "8px 10px", cursor: "pointer", fontFamily: FT, fontWeight: 600 }}>🔍 Scout</button>
+            {all.length > 0 && <button onClick={function() { toCSV(all.map(function(p) { return Object.assign({}, p, { _neighborhood: nh.name, _city: city.name }) }), false) }} style={{ background: CL.card, border: "1px solid " + CL.border, borderRadius: 7, color: CL.mut, fontSize: 10, padding: "8px 10px", cursor: "pointer", fontFamily: FT, fontWeight: 600 }}>CSV</button>}
             {mUrl && <a href={mUrl} target="_blank" rel="noopener noreferrer" style={{ flex: 1, background: CL.accBg, border: "1px solid " + CL.acc + "33", borderRadius: 7, color: CL.acc, fontSize: 10, padding: "8px 10px", fontFamily: FT, fontWeight: 600, textDecoration: "none", textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center" }}>🗺 Walk ({walkable.length})</a>}
           </div>
           {lastScoutCount !== null && <div style={{ background: CL.accBg, border: "1px solid " + CL.acc + "22", borderRadius: 5, padding: "5px 10px", marginBottom: 8 }}><p style={{ margin: 0, fontSize: 10, color: CL.acc }}>Found {lastScoutCount} new business{lastScoutCount !== 1 ? "es" : ""}</p></div>}
@@ -573,6 +606,10 @@ export default function App() {
                   {p.contact && <div style={{ marginTop: 8 }}><span style={{ fontSize: 7, color: "#60B8F7", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>Contact</span><p style={{ margin: "3px 0 0", fontSize: 10, color: CL.text, lineHeight: 1.4 }}>👤 {p.contact}</p></div>}
                   {p.notes && <div style={{ marginTop: 8 }}><span style={{ fontSize: 7, color: CL.dim, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>Notes</span><p style={{ margin: "3px 0 0", fontSize: 10, color: CL.text, lineHeight: 1.4 }}>{p.notes}</p></div>}
                   {p.visitedAt && <p style={{ margin: "6px 0 0", fontSize: 8, color: CL.dim }}>Visited {new Date(p.visitedAt).toLocaleDateString()}</p>}
+                  <label onClick={function(e) { e.stopPropagation() }} style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 10, cursor: "pointer", userSelect: "none" }}>
+                    <input type="checkbox" checked={!!p.emailed} onChange={function() { doUpdateP(p.id, { emailed: !p.emailed }) }} style={{ accentColor: CL.acc, width: 14, height: 14, cursor: "pointer" }} />
+                    <span style={{ fontSize: 10, color: p.emailed ? CL.acc : CL.mut }}>Emailed</span>
+                  </label>
                   <div style={{ display: "flex", gap: 4, marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
                     {Object.keys(STATUS).map(function(k) { var v = STATUS[k]; return <button key={k} onClick={function() { doUpdateP(p.id, { status: k }) }} style={{ background: p.status === k ? v.bg : "transparent", border: "1px solid " + (p.status === k ? v.color + "44" : CL.border), borderRadius: 4, color: p.status === k ? v.color : CL.dim, fontSize: 9, padding: "3px 7px", cursor: "pointer", fontFamily: FT }}>{v.icon}</button> })}
                     <span style={{ flex: 1 }} />
