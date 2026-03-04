@@ -469,7 +469,10 @@ export default function App() {
                       <button onClick={function() { setAddNhCity(null); setAddNhInput("") }} style={{ background: "none", border: "1px solid " + CL.border, borderRadius: 5, color: CL.dim, fontSize: 10, padding: "7px 8px", cursor: "pointer", fontFamily: FT }}>✕</button>
                     </div>
                   ) : (
-                    <button onClick={function() { setAddNhCity(c.id); setAddNhInput("") }} style={{ display: "block", width: "100%", background: "none", border: "1px dashed " + CL.border, borderRadius: 6, color: CL.dim, fontSize: 10, padding: "7px 12px", marginTop: 4, cursor: "pointer", fontFamily: FT, textAlign: "center" }}>+ Neighborhood</button>
+                    <div style={{ display: "flex", gap: 5, marginTop: 4 }}>
+                      <button onClick={function() { setAddNhCity(c.id); setAddNhInput("") }} style={{ flex: 1, background: "none", border: "1px dashed " + CL.border, borderRadius: 6, color: CL.dim, fontSize: 10, padding: "7px 12px", cursor: "pointer", fontFamily: FT, textAlign: "center" }}>+ Neighborhood</button>
+                      <button onClick={function() { if (confirm("Delete " + c.name + " and all its neighborhoods?")) { deepSet(function(d) { delete d.cities[c.id] }); setOpenCity(null) } }} style={{ background: "none", border: "1px solid #E8606A22", borderRadius: 6, color: "#E8606A88", fontSize: 10, padding: "7px 10px", cursor: "pointer", fontFamily: FT }}>🗑 Delete City</button>
+                    </div>
                   )}
                 </div>}
               </div>
