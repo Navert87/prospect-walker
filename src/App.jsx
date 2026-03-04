@@ -56,19 +56,21 @@ async function getNHs(city) {
 }
 
 async function scoutBiz(nh, city, coords) {
-  // Step 1: Find businesses — geographic constraint is the ONLY job
   var geo = coords
-    ? "I am standing at GPS coordinates " + coords.lat + ", " + coords.lng + " in " + nh + ", " + city + ".\n\nFind small independent businesses within a HALF MILE of my location. Every business MUST be walkable from me in under 10 minutes. Do NOT include anything farther away."
-    : "Find small independent businesses in the " + nh + " neighborhood of " + city + ".\n\nONLY include businesses physically located within " + nh + ". Do NOT include businesses from adjacent neighborhoods. Every business must be within a 10-15 minute walk of the others. If unsure whether it's in " + nh + ", leave it out."
-  var findRaw = await callScout(geo + "\n\nRules:\n- Search the web to verify each business exists and is currently operating\n- Every business MUST have a real street address you found online\n- NO chains or franchises\n- 5 verified local businesses is better than 15 guessed ones\n\nReturn ONLY a JSON array:\n[{\"name\":\"Exact Business Name\",\"address\":\"Full street address\",\"type\":\"category\",\"currentWebsite\":\"https://url or null\"}]")
-  var found = grabJSON(findRaw)
+    ? "I am standing at GPS coordinates " + coords.lat + ", " + coords.lng + " in " + nh + ", " + city + ". Find small independent businesses within a HALF MILE of my location. Every business MUST be walkable from me in under 10 minutes. Do NOT include anything farther away."
+    : "List 10-15 small independent businesses (not chains) in the " + nh + " neighborhood of " + city + ". ONLY businesses physically within " + nh + ". Do NOT include businesses from adjacent neighborhoods. If unsure whether it's in " + nh + ", leave it out."
+  var raw = await callScout(geo + "\n\nRules:\n- Search the web to verify each business currently exists\n- Every business MUST have a real street address\n- NO chains or franchises\n- 5 verified is better than 15 guessed\n\nReturn ONLY a JSON array:\n[{\"name\":\"Exact Business Name\",\"address\":\"Full street address\",\"type\":\"category\"}]")
+  var found = grabJSON(raw)
   if (!found || !Array.isArray(found) || found.length === 0) throw new Error("No businesses found - try again")
+  return found
+}
 
-  // Step 2: Evaluate web presence for found businesses
-  var evalRaw = await callScout("I run Hypandra Consulting offering web development, AI integration, and digital consulting for small businesses.\n\nFor each business below, search the web for their website, Google Business listing, social media, and reviews. If they have a website, check for: outdated design, no mobile responsiveness, no online booking/ordering, broken links, missing SSL.\n\nBusinesses to evaluate:\n" + JSON.stringify(found) + "\n\nReturn ONLY a JSON array with ALL the businesses, adding these fields to each:\n[{\"name\":\"(keep original)\",\"address\":\"(keep original)\",\"type\":\"(keep original)\",\"currentWebsite\":\"(keep or update)\",\"webScore\":\"poor|weak|decent|strong\",\"issues\":[\"specific issue found\"],\"talkingPoints\":[\"specific consulting pitch based on their actual issues\"]}]\n\nSort by weakest web presence first.")
-  var evaluated = grabJSON(evalRaw)
-  if (!evaluated || !Array.isArray(evaluated)) return found.map(function(b) { return Object.assign({ webScore: "weak", issues: [], talkingPoints: [] }, b) })
-  return evaluated
+async function checkWebPresence(name, address, city) {
+  var raw = await callScout("Search the web for '" + name + "' at " + address + " in " + city + ". Find their website, Google Business listing, social media, and online reviews. If they have a website, check for: outdated design, no mobile responsiveness, no online booking/ordering, broken links, missing SSL.\n\nEvaluate their digital presence for Hypandra Consulting (we offer web development, AI integration, and digital consulting).\n\nReturn ONLY JSON:\n{\"webScore\":\"poor|weak|decent|strong\",\"issues\":[\"specific issue\"],\"talkingPoints\":[\"pitch idea\"],\"currentWebsite\":\"url or null\"}")
+  var p = grabJSON(raw)
+  if (!p) throw new Error("Parse failed")
+  if (Array.isArray(p)) return p[0]
+  return p
 }
 
 async function identifyLocation(lat, lng) {
@@ -157,6 +159,7 @@ export default function App() {
   var [walkSel, setWalkSel] = useState(new Set())
   var [lastScoutCount, setLastScoutCount] = useState(null)
   var [lookingUp, setLookingUp] = useState(false)
+  var [checkingWeb, setCheckingWeb] = useState(null)
   var [addNhCity, setAddNhCity] = useState(null)
   var [addNhInput, setAddNhInput] = useState("")
   var [userCoords, setUserCoords] = useState(null)
@@ -244,8 +247,8 @@ export default function App() {
           var pid = uid()
           pros[pid] = {
             id: pid, name: b.name || "Unknown", address: b.address || "", type: b.type || "",
-            webScore: b.webScore || "weak", issues: b.issues || [], talkingPoints: b.talkingPoints || [],
-            currentWebsite: cleanUrl(b.currentWebsite), status: "not_visited", notes: "",
+            webScore: null, issues: [], talkingPoints: [],
+            currentWebsite: null, status: "not_visited", notes: "",
             contact: "", visitedAt: null,
           }
         })
@@ -263,6 +266,23 @@ export default function App() {
       Object.assign(p, upd)
       if ((upd.status === "visited" || upd.status === "interested") && !p.visitedAt) p.visitedAt = new Date().toISOString()
     })
+  }
+
+  var doCheckWeb = async function(pid) {
+    if (!city) return
+    var p = nh.prospects[pid]
+    if (!p) return
+    setCheckingWeb(pid)
+    try {
+      var result = await checkWebPresence(p.name, p.address, city.name)
+      doUpdateP(pid, {
+        webScore: result.webScore || "weak",
+        issues: result.issues || [],
+        talkingPoints: result.talkingPoints || [],
+        currentWebsite: cleanUrl(result.currentWebsite),
+      })
+    } catch(e) { setErr("Web check failed: " + e.message) }
+    setCheckingWeb(null)
   }
 
   var doAddP = function(f) {
@@ -360,8 +380,8 @@ export default function App() {
               var pid = uid()
               pros[pid] = {
                 id: pid, name: b.name || "Unknown", address: b.address || "", type: b.type || "",
-                webScore: b.webScore || "weak", issues: b.issues || [], talkingPoints: b.talkingPoints || [],
-                currentWebsite: cleanUrl(b.currentWebsite), status: "not_visited", notes: "",
+                webScore: null, issues: [], talkingPoints: [],
+                currentWebsite: null, status: "not_visited", notes: "",
                 contact: "", visitedAt: null,
               }
             })
@@ -545,7 +565,9 @@ export default function App() {
     var all = Object.values(nh.prospects || {})
     var shown = all.filter(function(p) { return filt === "all" || p.status === filt }).sort(function(a, b) {
       var w = { poor: 0, weak: 1, decent: 2, strong: 3 }
-      var d = (w[a.webScore] || 1) - (w[b.webScore] || 1)
+      var wa = a.webScore != null ? w[a.webScore] : -1
+      var wb = b.webScore != null ? w[b.webScore] : -1
+      var d = wa - wb
       return d !== 0 ? d : (STATUS[a.status] || {}).sort - (STATUS[b.status] || {}).sort
     })
     var prospectIds = new Set(all.map(function(p) { return p.id }))
@@ -594,8 +616,9 @@ export default function App() {
             <div style={{ textAlign: "center", padding: "40px 20px", color: CL.dim }}><p style={{ fontSize: 11 }}>{all.length === 0 ? "Hit Scout to find prospects" : "No matches"}</p></div>
           ) : shown.map(function(p) {
             var sc = STATUS[p.status]
-            var ws = WS[p.webScore] || WS.weak
+            var ws = p.webScore ? WS[p.webScore] : null
             var op = exp === p.id
+            var isChecking = checkingWeb === p.id
             return (
               <div key={p.id} style={{ background: CL.card, borderLeft: "3px solid " + sc.color, border: "1px solid " + (op ? sc.color + "33" : CL.border), borderLeftWidth: 3, borderLeftColor: sc.color, borderRadius: 7, marginBottom: 5, overflow: "hidden" }}>
                 <div style={{ display: "flex", alignItems: "center" }}>
@@ -606,7 +629,8 @@ export default function App() {
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap" }}>
                         <span style={{ fontSize: 11, color: CL.wh, fontWeight: 600 }}>{p.name}</span>
-                        <span style={{ fontSize: 7, color: ws.color, background: ws.bg, padding: "2px 6px", borderRadius: 3, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: FT }}>{ws.label}</span>
+                        {ws && <span style={{ fontSize: 7, color: ws.color, background: ws.bg, padding: "2px 6px", borderRadius: 3, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", fontFamily: FT }}>{ws.label}</span>}
+                        {isChecking && <span style={{ fontSize: 7, color: CL.acc, padding: "2px 6px", borderRadius: 3, background: CL.accBg, fontFamily: FT }}>checking...</span>}
                       </div>
                       {p.type && <p style={{ margin: "1px 0 0", fontSize: 9, color: CL.dim }}>{p.type}{p.address ? " · " + p.address : ""}</p>}
                     </div>
@@ -614,6 +638,8 @@ export default function App() {
                   </button>
                 </div>
                 {op && <div style={{ padding: "0 12px 10px", borderTop: "1px solid " + CL.border }}>
+                  {!p.webScore && !isChecking && <button onClick={function() { doCheckWeb(p.id) }} style={{ display: "block", width: "100%", background: CL.accBg, border: "1px solid " + CL.acc + "33", borderRadius: 6, color: CL.acc, fontSize: 10, padding: "8px 12px", cursor: "pointer", fontFamily: FT, fontWeight: 600, marginTop: 8 }}>🔍 Check Web Presence</button>}
+                  {isChecking && <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, padding: "8px 12px", background: CL.accBg, borderRadius: 6, border: "1px solid " + CL.acc + "22" }}><div style={{ width: 14, height: 14, border: "2px solid " + CL.border, borderTopColor: CL.acc, borderRadius: "50%", animation: "pw .7s linear infinite", flexShrink: 0 }} /><span style={{ fontSize: 10, color: CL.acc }}>Checking web presence...</span></div>}
                   {p.issues && p.issues.length > 0 && <div style={{ marginTop: 8 }}><span style={{ fontSize: 7, color: "#E8606A", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>Issues</span><div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 3 }}>{p.issues.map(function(x, i) { return <span key={i} style={{ fontSize: 9, color: "#E8606A", background: "#3B141866", padding: "2px 6px", borderRadius: 3 }}>{x}</span> })}</div></div>}
                   {p.talkingPoints && p.talkingPoints.length > 0 && <div style={{ marginTop: 8, background: CL.bg, padding: "8px 10px", borderRadius: 5 }}><span style={{ fontSize: 7, color: CL.acc, textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 700 }}>Talking Points</span>{p.talkingPoints.map(function(t, i) { return <p key={i} style={{ margin: "4px 0 0", fontSize: 10, color: CL.text, lineHeight: 1.4 }}>→ {t}</p> })}</div>}
                   {p.currentWebsite && <a href={p.currentWebsite} target="_blank" rel="noopener noreferrer" style={{ display: "inline-block", marginTop: 6, fontSize: 9, color: CL.acc }}>🔗 {p.currentWebsite}</a>}
